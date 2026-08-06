@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 # ============================================================
-# 版本: v19-20260806
-# 相对 v18:
-#   1) 去掉末尾股票代码数组输出；改为输出/展示股票名称列表
+# 版本: v20-20260806
+# 相对 v19:
+#   1) 修复 ImportError：聚宽研究环境不能显式 from jqdata import get_price
+#      改回 star import，并用 exec 注入 globals（同时规避 import* 仅模块顶层限制）
 # ------------------------------------------------------------
 # 作者: rouser / 569125965@qq.com
 # ------------------------------------------------------------
@@ -20,23 +21,13 @@
 # 3) 排序：量能放大倍数 -> 反弹幅度 -> 超跌深度（越大越靠前）
 # 4) 板块对比：申万一级行业归一K + 窗口收益/相对强弱/相关性/契合标签
 # 5) 输出：Notebook 进度条；HTML 报告含大盘对照、排序总览、个股详情
-# 6) 用法：聚宽「投资研究」整段粘贴运行；确认版本号 v19-20260806；
-#    下载 oversold_rebound_report_v19_*.html
+# 6) 用法：聚宽「投资研究」整段粘贴运行；确认版本号 v20-20260806；
+#    下载 oversold_rebound_report_v20_*.html
 # ============================================================
 
-from jqdata import (
-    get_price,
-    get_all_securities,
-    get_security_info,
-    get_trade_days,
-    get_fundamentals,
-    get_industry,
-    get_industry_stocks,
-    query,
-    valuation,
-    balance,
-    income,
-)
+# 聚宽研究：API 靠 star import 注入；显式 import 单名会 ImportError。
+# 用 exec(..., globals()) 保证注入到当前全局，并避免“import* 仅模块顶层”语法限制。
+exec('from jqdata import *', globals())
 import pandas as pd
 import numpy as np
 from datetime import datetime, date as date_cls, timedelta
@@ -51,7 +42,7 @@ import matplotlib.dates as mdates
 from matplotlib.patches import Rectangle
 from IPython.display import display, HTML, FileLink
 
-VERSION = 'v19-20260806'
+VERSION = 'v20-20260806'
 AUTHOR_NAME = 'rouser'
 AUTHOR_EMAIL = '569125965@qq.com'
 AUTHOR_LINE = '%s / %s' % (AUTHOR_NAME, AUTHOR_EMAIL)
