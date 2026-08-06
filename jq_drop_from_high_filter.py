@@ -1,13 +1,9 @@
 # -*- coding: utf-8 -*-
 # ============================================================
-# 版本: v16-20260806
-# 相对 v15:
-#   1) 修复大盘对照不显示：强化指数取数（字符串/区间/多指数回退），异常可见
-#   2) 大盘日K嵌入「排序总览」框内顶部，避免独立面板被漏看
-# 相对 v14:
-#   - 作者信息：rouser / 569125965@qq.com
-# 相对 v13:
-#   - 窗口期大盘日K对照；Notebook 可视化进度条
+# 版本: v17-20260806
+# 相对 v16:
+#   1) 修复 SyntaxError：不用 from jqdata import *，改为显式导入（兼容 Notebook 执行环境）
+#   2) 版本注释只保留相对上一版的变更，不再堆历史改进
 # ------------------------------------------------------------
 # 作者: rouser / 569125965@qq.com
 # ------------------------------------------------------------
@@ -22,26 +18,26 @@
 #    - 现价相对高点回撤仍在 35%~75%（没涨回去，也没跌废）
 #    - 近5日均量 / 下跌期均量 >= 1.2（回升放量）
 #    - 排除 ST/退市风险名、停牌、次新、北交所、高负债/资不抵债等
-# 3) 排序：
-#    量能放大倍数 -> 反弹幅度 -> 超跌深度（越大越靠前）
-# 4) 板块对比：
-#    取申万一级行业，生成板块归一日K，并计算：
-#    窗口收益、回升段相对强弱、日收益相关性、契合标签
-# 5) 输出：
-#    - 研究环境用可视化进度条显示进度，不刷屏图文
-#    - 生成可下载 HTML 报告：
-#      a. 排序总览内嵌窗口期大盘日K（对照用）
-#      b. 排序列表（含个股/板块迷你走势，可点详情跳转）
-#      c. 下方每只股票完整详情（指标卡 + 摘要 + 个股日K/板块日K/成交量）
-#      d. 详情页可“回到顶部”
-# 6) 使用方法：
-#    复制到聚宽「投资研究」Notebook 整段运行；
-#    确认首行输出版本号为 v16-20260806；
-#    结束后下载生成的 oversold_rebound_report_v16_*.html
-# 用法: 聚宽「投资研究」整段粘贴，确认版本号 v16-20260806
+# 3) 排序：量能放大倍数 -> 反弹幅度 -> 超跌深度（越大越靠前）
+# 4) 板块对比：申万一级行业归一K + 窗口收益/相对强弱/相关性/契合标签
+# 5) 输出：Notebook 进度条；HTML 报告含大盘对照、排序总览、个股详情
+# 6) 用法：聚宽「投资研究」整段粘贴运行；确认版本号 v17-20260806；
+#    下载 oversold_rebound_report_v17_*.html
 # ============================================================
 
-from jqdata import *
+from jqdata import (
+    get_price,
+    get_all_securities,
+    get_security_info,
+    get_trade_days,
+    get_fundamentals,
+    get_industry,
+    get_industry_stocks,
+    query,
+    valuation,
+    balance,
+    income,
+)
 import pandas as pd
 import numpy as np
 from datetime import datetime, date as date_cls, timedelta
@@ -56,7 +52,7 @@ import matplotlib.dates as mdates
 from matplotlib.patches import Rectangle
 from IPython.display import display, HTML, FileLink
 
-VERSION = 'v16-20260806'
+VERSION = 'v17-20260806'
 AUTHOR_NAME = 'rouser'
 AUTHOR_EMAIL = '569125965@qq.com'
 AUTHOR_LINE = '%s / %s' % (AUTHOR_NAME, AUTHOR_EMAIL)
@@ -606,7 +602,6 @@ def _normalize_ohlc_df(df, prefer_code=None):
         return pd.DataFrame()
     # Panel（旧环境）
     try:
-        import types
         # pandas.Panel 在新版本已移除；用鸭子判断
         if hasattr(df, 'minor_axis') and hasattr(df, 'to_frame'):
             try:
@@ -724,7 +719,6 @@ def fetch_market_ohlc(asof, count=LOOKBACK_MAX_DAYS):
             global MARKET_INDEX, MARKET_NAME
             MARKET_INDEX = code
             MARKET_NAME = name
-            g.attrs = getattr(g, 'attrs', {})
             return g, None
         tried.append(code)
         if errs:
