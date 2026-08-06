@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 # ============================================================
-# 版本: v23-20260806
-# 相对 v22:
-#   1) 距高点回撤区间由 35%~75% 收紧为 60%~75%
+# 版本: v24-20260806
+# 相对 v23:
+#   1) 修复成交量着色时 NaN 触发的 RuntimeWarning（invalid value in greater_equal）
+#   2) 去掉初筛日志中的股票代码样本数组等调试输出
 # ------------------------------------------------------------
 # 作者: rouser / 569125965@qq.com
 # ------------------------------------------------------------
@@ -20,8 +21,8 @@
 # 3) 排序：量能放大倍数 -> 反弹幅度 -> 超跌深度（越大越靠前）
 # 4) 板块对比：申万一级行业归一K + 窗口收益/相对强弱/相关性/契合标签
 # 5) 输出：Notebook 进度条；HTML 报告含大盘对照、排序总览、个股详情
-# 6) 用法：聚宽「投资研究」整段粘贴运行；确认版本号 v23-20260806；
-#    下载 oversold_rebound_report_v23_*.html
+# 6) 用法：聚宽「投资研究」整段粘贴运行；确认版本号 v24-20260806；
+#    下载 oversold_rebound_report_v24_*.html
 # ============================================================
 
 # 聚宽研究：API 靠 star import 注入；显式 import 单名会 ImportError。
@@ -41,7 +42,7 @@ import matplotlib.dates as mdates
 from matplotlib.patches import Rectangle
 from IPython.display import display, HTML, FileLink
 
-VERSION = 'v23-20260806'
+VERSION = 'v24-20260806'
 AUTHOR_NAME = 'rouser'
 AUTHOR_EMAIL = '569125965@qq.com'
 AUTHOR_LINE = '%s / %s' % (AUTHOR_NAME, AUTHOR_EMAIL)
@@ -247,10 +248,6 @@ def get_universe(asof):
     s1 = get_all_securities(types=['stock'], date=asof_str)
     s2 = get_all_securities(types=['stock'], date=asof)
     s3 = get_all_securities(types=['stock'])
-    print('get_all_securities(str/date/none):',
-          0 if s1 is None else len(s1),
-          0 if s2 is None else len(s2),
-          0 if s3 is None else len(s3))
 
     stocks = None
     for cand in (s1, s2, s3):
@@ -277,7 +274,7 @@ def get_universe(asof):
         if is_st_or_risk_name(row['display_name']):
             continue
         codes.append(code)
-    print('初筛(去次新/ST/北交等):', len(codes), '样本:', codes[:5])
+    print('初筛(去次新/ST/北交等):', len(codes))
     return codes
 
 
@@ -565,18 +562,32 @@ def score_one(g):
 def draw_candles(ax, x, o, h, l, c, width=0.6):
     """兼容旧matplotlib的手工K线"""
     for i in range(len(x)):
-        up = c[i] >= o[i]
+        oi, hi, li, ci = float(o[i]), float(h[i]), float(l[i]), float(c[i])
+        if not (np.isfinite(oi) and np.isfinite(hi) and np.isfinite(li) and np.isfinite(ci)):
+            continue
+        up = ci >= oi
         color = '#3dd68c' if up else '#ff6b6b'
-        ax.vlines(x[i], l[i], h[i], color=color, linewidth=0.8, zorder=2)
-        body_low = min(o[i], c[i])
-        body_h = abs(c[i] - o[i])
+        ax.vlines(x[i], li, hi, color=color, linewidth=0.8, zorder=2)
+        body_low = min(oi, ci)
+        body_h = abs(ci - oi)
         if body_h < 1e-8:
-            body_h = max((h[i] - l[i]) * 0.02, 1e-6)
+            body_h = max((hi - li) * 0.02, 1e-6)
         ax.add_patch(Rectangle(
             (x[i] - width / 2.0, body_low),
             width, body_h,
             facecolor=color, edgecolor=color, linewidth=0.6, zorder=3, alpha=0.95
         ))
+
+
+def volume_bar_colors(close):
+    """按涨跌给成交量柱着色；NaN 视为非上涨，避免 RuntimeWarning。"""
+    c = np.asarray(close, dtype=float)
+    if len(c) == 0:
+        return np.array([], dtype=object)
+    delta = np.diff(c)
+    delta = np.concatenate([[0.0], delta])
+    up = np.isfinite(delta) & (delta >= 0)
+    return np.where(up, '#3dd68c', '#ff6b6b')
 
 
 def fig_to_base64(fig):
@@ -819,7 +830,7 @@ def plot_market_kline(asof, return_base64=True):
 
         delta = np.diff(c)
         delta = np.concatenate([[0.0], delta])
-        colors = np.where(delta >= 0, '#3dd68c', '#ff6b6b')
+        colors = volume_bar_colors(c)
         ax2.bar(x, vol, color=colors, width=0.7, alpha=0.8)
         ax2.set_ylabel('成交量')
         ax2.grid(True, alpha=0.15, color='#6b7c93')
@@ -962,10 +973,8 @@ def plot_stock_card(rank, info, asof, return_base64=False, show=False):
     ax2.grid(True, alpha=0.18, color='#6b7c93')
     ax2.tick_params(labelbottom=False)
 
-    # 成交量（兼容旧numpy）
-    delta = np.diff(c)
-    delta = np.concatenate([[0.0], delta])
-    colors = np.where(delta >= 0, '#3dd68c', '#ff6b6b')
+    # 成交量（兼容旧numpy；NaN 安全着色）
+    colors = volume_bar_colors(c)
     ax3.bar(x, vol, color=colors, width=0.7, alpha=0.8)
     ax3.set_ylabel('成交量')
     ax3.grid(True, alpha=0.15, color='#6b7c93')
