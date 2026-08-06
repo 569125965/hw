@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 # ============================================================
-# 版本: v24-20260806
-# 相对 v23:
-#   1) 修复成交量着色时 NaN 触发的 RuntimeWarning（invalid value in greater_equal）
-#   2) 去掉初筛日志中的股票代码样本数组等调试输出
+# 版本: v25-20260806
+# 相对 v24:
+#   1) 对照票未进榜时输出逐条诊断（峰谷跌幅 / 现价距高点 / 反弹 / 量能），避免混淆两套回撤指标
 # ------------------------------------------------------------
 # 作者: rouser / 569125965@qq.com
 # ------------------------------------------------------------
@@ -21,8 +20,8 @@
 # 3) 排序：量能放大倍数 -> 反弹幅度 -> 超跌深度（越大越靠前）
 # 4) 板块对比：申万一级行业归一K + 窗口收益/相对强弱/相关性/契合标签
 # 5) 输出：Notebook 进度条；HTML 报告含大盘对照、排序总览、个股详情
-# 6) 用法：聚宽「投资研究」整段粘贴运行；确认版本号 v24-20260806；
-#    下载 oversold_rebound_report_v24_*.html
+# 6) 用法：聚宽「投资研究」整段粘贴运行；确认版本号 v25-20260806；
+#    下载 oversold_rebound_report_v25_*.html
 # ============================================================
 
 # 聚宽研究：API 靠 star import 注入；显式 import 单名会 ImportError。
@@ -42,7 +41,7 @@ import matplotlib.dates as mdates
 from matplotlib.patches import Rectangle
 from IPython.display import display, HTML, FileLink
 
-VERSION = 'v24-20260806'
+VERSION = 'v25-20260806'
 AUTHOR_NAME = 'rouser'
 AUTHOR_EMAIL = '569125965@qq.com'
 AUTHOR_LINE = '%s / %s' % (AUTHOR_NAME, AUTHOR_EMAIL)
@@ -828,8 +827,6 @@ def plot_market_kline(asof, return_base64=True):
             color='#3dd68c', fontsize=8, ha='center'
         )
 
-        delta = np.diff(c)
-        delta = np.concatenate([[0.0], delta])
         colors = volume_bar_colors(c)
         ax2.bar(x, vol, color=colors, width=0.7, alpha=0.8)
         ax2.set_ylabel('成交量')
@@ -1249,22 +1246,71 @@ def select_stocks(codes, asof, pbar=None):
     ).reset_index(drop=True)
 
 
-def analyze_one(code, asof):
+def diagnose_check_code(code, asof):
+    """对照票未入选时，打印关键指标与哪条规则未过（不依赖 score_one 成功）。"""
+    try:
+        name = get_security_info(code).display_name
+    except Exception:
+        name = code
     hist = fetch_price([code], asof, LOOKBACK_MAX_DAYS + 5, ['open', 'high', 'low', 'close', 'volume'])
-    if hist.empty:
-        print(code, '无行情')
+    print('\n----- 对照票诊断: %s %s -----' % (code, name))
+    if hist is None or hist.empty:
+        print('无行情，无法诊断')
         return
-    name = get_security_info(code).display_name
-    info = score_one(hist)
-    print('\n----- 单票诊断: %s %s -----' % (code, name))
-    if info is None:
-        print('未满足v9入选条件')
+
+    g = hist.sort_values('time').reset_index(drop=True)
+    window = g.iloc[-LOOKBACK_MAX_DAYS:].reset_index(drop=True)
+    if len(window) < 30:
+        print('窗口数据不足: %d 条' % len(window))
         return
-    info['code'] = code
-    info['name'] = name
-    info = enrich_industry(info, asof)
-    print(info['summary'])
-    print('=> 按v9规则是否应入选: True')
+
+    idx_peak = int(np.nanargmax(window['high'].values))
+    peak = float(window['high'].iloc[idx_peak])
+    after = window.iloc[idx_peak:]
+    idx_low_rel = int(np.nanargmin(after['low'].values))
+    idx_low = idx_peak + idx_low_rel
+    trough = float(after['low'].iloc[idx_low_rel])
+    last_close = float(window['close'].iloc[-1])
+    max_dd = 1.0 - trough / peak if peak else float('nan')
+    bounce = last_close / trough - 1.0 if trough else float('nan')
+    cur_dd = 1.0 - last_close / peak if peak else float('nan')
+    days_since_low = len(window) - 1 - idx_low
+    vol_amp, _, _, _ = calc_vol_amplify(window, idx_peak, idx_low)
+
+    print('窗口交易日: %d | 高点 %.3f (%s) | 谷底 %.3f (%s) | 现价 %.3f' % (
+        len(window), peak, to_date_str(window['time'].iloc[idx_peak]),
+        trough, to_date_str(window['time'].iloc[idx_low]), last_close
+    ))
+    print('说明: 「58→19」对应的是 峰→谷 跌幅；入选另看 现价距高点回撤')
+    checks = [
+        ('峰→谷跌幅 ≥ %.0f%%' % (MIN_DD * 100), max_dd, max_dd >= MIN_DD,
+         '%.2f%%' % (max_dd * 100)),
+        ('谷底反弹 ≥ %.0f%%' % (MIN_BOUNCE * 100), bounce, bounce >= MIN_BOUNCE,
+         '%.2f%%' % (bounce * 100)),
+        ('现价距高点回撤 [%.0f%%, %.0f%%]' % (MIN_CUR_DD * 100, MAX_CUR_DD * 100),
+         cur_dd, (cur_dd >= MIN_CUR_DD and cur_dd <= MAX_CUR_DD),
+         '%.2f%%' % (cur_dd * 100)),
+        ('低点后至少 %d 日' % MIN_DAYS_AFTER_LOW, days_since_low,
+         days_since_low >= MIN_DAYS_AFTER_LOW, '%d 日' % days_since_low),
+        ('量能放大 ≥ %.1fx' % MIN_VOL_AMPLIFY, vol_amp,
+         np.isfinite(vol_amp) and vol_amp >= MIN_VOL_AMPLIFY,
+         ('%.2fx' % vol_amp) if np.isfinite(vol_amp) else 'N/A'),
+    ]
+    fail = []
+    for label, _, ok, val in checks:
+        mark = '通过' if ok else '未过'
+        print('  [%s] %s = %s' % (mark, label, val))
+        if not ok:
+            fail.append(label)
+    if fail:
+        print('=> 未进榜主因: ' + '；'.join(fail))
+    else:
+        print('=> 形态条件都过，可能被停牌/ST/财务等前置过滤踢出')
+    print('-------------------------------')
+
+
+def analyze_one(code, asof):
+    diagnose_check_code(code, asof)
 
 
 def save_html_report(asof, total, header_html, summary_html, blocks_html, name_list):
@@ -1413,6 +1459,7 @@ def main():
             CHECK_CODE, int(result.index[result['code'] == CHECK_CODE][0]) + 1))
     else:
         print('      对照票 %s 未进榜' % CHECK_CODE)
+        diagnose_check_code(CHECK_CODE, asof)
 
     show_n = min(len(result), MAX_SHOW)
     header_html = render_header(asof, len(result), show=False)
