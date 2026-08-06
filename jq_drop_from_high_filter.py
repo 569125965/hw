@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 # ============================================================
-# 版本: v13-20260806
+# 版本: v14-20260806
+# 相对 v13:
+#   1) HTML 报告在「排序总览」上方增加窗口期大盘日K（默认上证指数+成交量）
+#   2) 标注窗口收益/最大回撤/高低点日期，方便对照个股
 # 相对 v12:
-#   1) Notebook 用可视化 HTML 进度条（百分比 + 阶段文案 + 已用/剩余时间）
-#   2) 整条流水线共用一条进度条（停牌→财务→筛选→报告），不刷屏叠多条
-#   3) 环境不支持 display 刷新时自动回退 ASCII 进度条
+#   - Notebook 可视化进度条（四阶段共用一条；不支持则 ASCII）
 # ------------------------------------------------------------
 # 【脚本功能说明】
 # 1) 选股目标：
@@ -25,14 +26,15 @@
 # 5) 输出：
 #    - 研究环境用可视化进度条显示进度，不刷屏图文
 #    - 生成可下载 HTML 报告：
-#      a. 顶部“排序总览”（含个股/板块迷你走势，可点详情跳转）
-#      b. 下方每只股票完整详情（指标卡 + 摘要 + 个股日K/板块日K/成交量）
-#      c. 详情页可“回到顶部”
+#      a. 窗口期大盘日K（对照用）
+#      b. 顶部“排序总览”（含个股/板块迷你走势，可点详情跳转）
+#      c. 下方每只股票完整详情（指标卡 + 摘要 + 个股日K/板块日K/成交量）
+#      d. 详情页可“回到顶部”
 # 6) 使用方法：
 #    复制到聚宽「投资研究」Notebook 整段运行；
-#    确认首行输出版本号为 v13-20260806；
-#    结束后下载生成的 oversold_rebound_report_v13_*.html
-# 用法: 聚宽「投资研究」整段粘贴，确认版本号 v13-20260806
+#    确认首行输出版本号为 v14-20260806；
+#    结束后下载生成的 oversold_rebound_report_v14_*.html
+# 用法: 聚宽「投资研究」整段粘贴，确认版本号 v14-20260806
 # ============================================================
 
 from jqdata import *
@@ -50,7 +52,7 @@ import matplotlib.dates as mdates
 from matplotlib.patches import Rectangle
 from IPython.display import display, HTML, FileLink
 
-VERSION = 'v13-20260806'
+VERSION = 'v14-20260806'
 warnings.filterwarnings('ignore', message='.*tight_layout.*')
 warnings.filterwarnings('ignore', category=UserWarning, module='matplotlib')
 # 无界面后端，避免生成图时在笔记本弹出/刷屏
@@ -176,6 +178,9 @@ CHECK_CODE = '600418.XSHG'
 MAX_SHOW = 30
 INDUSTRY_TYPE = 'sw_l1'
 INDUSTRY_PEER_LIMIT = 40
+# 报告顶部对照用大盘指数（聚宽指数代码）
+MARKET_INDEX = '000001.XSHG'
+MARKET_NAME = '上证指数'
 # =================================================
 
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Arial Unicode MS', 'DejaVu Sans']
@@ -583,6 +588,175 @@ def fig_to_base64(fig):
     return base64.b64encode(buf.read()).decode('ascii')
 
 
+def fetch_market_ohlc(asof, count=LOOKBACK_MAX_DAYS):
+    """取窗口期大盘日K（OHLCV）。"""
+    df = fetch_price(
+        [MARKET_INDEX], asof, count,
+        ['open', 'high', 'low', 'close', 'volume']
+    )
+    if df is None or df.empty:
+        return pd.DataFrame()
+    g = df.copy()
+    if 'code' in g.columns:
+        g = g[g['code'] == MARKET_INDEX]
+    g = g.sort_values('time').reset_index(drop=True)
+    if len(g) > count:
+        g = g.iloc[-count:].reset_index(drop=True)
+    return g
+
+
+def calc_market_stats(df):
+    """窗口收益、峰值回撤、高低点日期。"""
+    if df is None or df.empty or len(df) < 5:
+        return None
+    c = df['close'].astype(float).values
+    h = df['high'].astype(float).values
+    l = df['low'].astype(float).values
+    times = pd.to_datetime(df['time'])
+    ret = float(c[-1] / c[0] - 1.0) if c[0] else float('nan')
+    # 用收盘价滚动峰值回撤
+    peak_so_far = np.maximum.accumulate(c)
+    dd = 1.0 - c / peak_so_far
+    max_dd = float(np.nanmax(dd))
+    idx_hi = int(np.nanargmax(h))
+    idx_lo = int(np.nanargmin(l))
+    # 若低点在高点前，仍保留真实高低点；另找高点后的最低点作「峰后回撤」参考
+    after = l[idx_hi:]
+    idx_lo_after = idx_hi + int(np.nanargmin(after)) if len(after) else idx_lo
+    peak_to_trough = float(1.0 - l[idx_lo_after] / h[idx_hi]) if h[idx_hi] else float('nan')
+    return {
+        'ret_pct': round(ret * 100, 2) if ret == ret else None,
+        'max_dd_pct': round(max_dd * 100, 2) if max_dd == max_dd else None,
+        'peak_to_trough_pct': round(peak_to_trough * 100, 2) if peak_to_trough == peak_to_trough else None,
+        'start': float(c[0]),
+        'end': float(c[-1]),
+        'high': float(h[idx_hi]),
+        'low': float(l[idx_lo]),
+        'high_date': to_date_str(times.iloc[idx_hi]),
+        'low_date': to_date_str(times.iloc[idx_lo]),
+        'start_date': to_date_str(times.iloc[0]),
+        'end_date': to_date_str(times.iloc[-1]),
+        'n': len(df),
+        'idx_hi': idx_hi,
+        'idx_lo': idx_lo,
+        'idx_lo_after': idx_lo_after,
+    }
+
+
+def plot_market_kline(asof, return_base64=True):
+    """
+    绘制窗口期大盘日K + 成交量。
+    返回 (base64_png 或 None, stats_dict 或 None)
+    """
+    df = fetch_market_ohlc(asof, LOOKBACK_MAX_DAYS)
+    stats = calc_market_stats(df)
+    if stats is None:
+        return None, None
+
+    times = pd.to_datetime(df['time'])
+    x = np.arange(len(df))
+    o = df['open'].astype(float).values
+    h = df['high'].astype(float).values
+    l = df['low'].astype(float).values
+    c = df['close'].astype(float).values
+    vol = df['volume'].astype(float).values if 'volume' in df.columns else np.zeros(len(df))
+
+    fig = plt.figure(figsize=(11.8, 4.6))
+    gs = fig.add_gridspec(2, 1, height_ratios=[2.6, 1.0], hspace=0.08)
+    ax1 = fig.add_subplot(gs[0, 0])
+    ax2 = fig.add_subplot(gs[1, 0], sharex=ax1)
+
+    draw_candles(ax1, x, o, h, l, c, width=0.65)
+    ax1.axvline(stats['idx_hi'], color='#ff6b6b', ls='--', lw=1, alpha=0.85)
+    ax1.axvline(stats['idx_lo_after'], color='#3dd68c', ls='--', lw=1, alpha=0.85)
+    ax1.axvspan(stats['idx_hi'], stats['idx_lo_after'], color='#ff6b6b', alpha=0.05)
+    ax1.set_ylabel('指数点位')
+    ax1.grid(True, alpha=0.18, color='#6b7c93')
+    ax1.tick_params(labelbottom=False)
+    ret_s = ('%+.2f%%' % stats['ret_pct']) if stats.get('ret_pct') is not None else 'N/A'
+    dd_s = ('%.2f%%' % stats['max_dd_pct']) if stats.get('max_dd_pct') is not None else 'N/A'
+    pt_s = ('%.2f%%' % stats['peak_to_trough_pct']) if stats.get('peak_to_trough_pct') is not None else 'N/A'
+    ax1.set_title(
+        '大盘对照  %s（%s）  |  %s ~ %s  |  窗口收益 %s  |  收盘最大回撤 %s  |  峰→谷 %s' % (
+            MARKET_NAME, MARKET_INDEX,
+            stats['start_date'], stats['end_date'],
+            ret_s, dd_s, pt_s
+        ),
+        loc='left', fontsize=12, color='#e7ecf3', pad=8
+    )
+    # 高低点标注
+    ax1.annotate(
+        '高 %.0f' % stats['high'],
+        xy=(stats['idx_hi'], stats['high']),
+        xytext=(0, 8), textcoords='offset points',
+        color='#ff6b6b', fontsize=8, ha='center'
+    )
+    ax1.annotate(
+        '低 %.0f' % float(l[stats['idx_lo_after']]),
+        xy=(stats['idx_lo_after'], float(l[stats['idx_lo_after']])),
+        xytext=(0, -12), textcoords='offset points',
+        color='#3dd68c', fontsize=8, ha='center'
+    )
+
+    delta = np.diff(c)
+    delta = np.concatenate([[0.0], delta])
+    colors = np.where(delta >= 0, '#3dd68c', '#ff6b6b')
+    ax2.bar(x, vol, color=colors, width=0.7, alpha=0.8)
+    ax2.set_ylabel('成交量')
+    ax2.grid(True, alpha=0.15, color='#6b7c93')
+    ticks = np.linspace(0, len(x) - 1, num=6, dtype=int)
+    ax2.set_xticks(ticks)
+    ax2.set_xticklabels([times.iloc[i].strftime('%Y-%m-%d') for i in ticks], fontsize=8)
+
+    fig.subplots_adjust(left=0.07, right=0.985, top=0.90, bottom=0.10, hspace=0.10)
+    b64 = fig_to_base64(fig) if return_base64 else None
+    plt.close(fig)
+    return b64, stats
+
+
+def market_panel_html(img_b64, stats):
+    """排序总览上方的大盘对照面板。"""
+    if not img_b64 or not stats:
+        return """
+        <div class="market-panel">
+          <div class="market-head">
+            <div class="market-title">窗口期大盘对照</div>
+            <div class="market-sub">未能获取 %s（%s）行情，跳过本图。</div>
+          </div>
+        </div>
+        """ % (_esc(MARKET_NAME), _esc(MARKET_INDEX))
+
+    ret_s = ('%+.2f%%' % stats['ret_pct']) if stats.get('ret_pct') is not None else 'N/A'
+    dd_s = ('%.2f%%' % stats['max_dd_pct']) if stats.get('max_dd_pct') is not None else 'N/A'
+    pt_s = ('%.2f%%' % stats['peak_to_trough_pct']) if stats.get('peak_to_trough_pct') is not None else 'N/A'
+    ret_cls = 'green' if (stats.get('ret_pct') or 0) >= 0 else 'red'
+    return """
+    <div class="market-panel" id="top">
+      <div class="market-head">
+        <div>
+          <div class="market-title">窗口期大盘对照 · {name}</div>
+          <div class="market-sub">
+            {start} ~ {end}（{n} 个交易日）· 与下方个股同一回看窗口，便于对照大盘环境
+          </div>
+        </div>
+        <div class="market-metrics">
+          <div class="mm"><div class="lab">窗口收益</div><div class="val {ret_cls}">{ret}</div></div>
+          <div class="mm"><div class="lab">收盘最大回撤</div><div class="val red">{dd}</div></div>
+          <div class="mm"><div class="lab">峰→谷</div><div class="val red">{pt}</div></div>
+          <div class="mm"><div class="lab">高点 / 低点</div><div class="val small">{hi} / {lo}</div></div>
+        </div>
+      </div>
+      <img class="chart" src="data:image/png;base64,{img}" alt="market-kline"/>
+    </div>
+    """.format(
+        name=_esc(MARKET_NAME),
+        start=_esc(stats['start_date']), end=_esc(stats['end_date']), n=stats['n'],
+        ret=_esc(ret_s), dd=_esc(dd_s), pt=_esc(pt_s), ret_cls=ret_cls,
+        hi=_esc(stats['high_date']), lo=_esc(stats['low_date']),
+        img=img_b64
+    )
+
+
 def plot_stock_card(rank, info, asof, return_base64=False, show=False):
     """个股日K + 板块日K + 成交量；默认不在笔记本显示，只用于生成HTML"""
     window = info['_window']
@@ -794,11 +968,11 @@ def summary_table_html(rows):
         ))
 
     return """
-    <div id="top" class="overview">
+    <div id="overview" class="overview">
       <div class="overview-head">
         <div>
           <div class="overview-title">排序总览</div>
-          <div class="overview-sub">先看列表比较，再点「详情」跳到下方完整K线；任一详情页可点「回到顶部」返回这里。</div>
+          <div class="overview-sub">上方为大盘窗口期日K对照；先看列表比较，再点「详情」跳到下方完整K线；任一详情页可点「回到顶部」返回大盘与总览。</div>
         </div>
         <div class="overview-count">共 {n} 只</div>
       </div>
@@ -959,6 +1133,15 @@ def save_html_report(asof, total, header_html, summary_html, blocks_html, code_l
     .overview-title{font-size:20px;font-weight:800;color:#4da3ff;}
     .overview-sub{color:#9aabbf;font-size:12.5px;margin-top:4px;line-height:1.5;}
     .overview-count{background:#1a2332;border:1px solid #2f3e52;border-radius:999px;padding:6px 12px;color:#3dd68c;font-weight:700;white-space:nowrap;}
+    .market-panel{background:#121821;border:1px solid #2f3e52;border-radius:14px;padding:16px;margin:8px 0 18px 0;}
+    .market-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:10px;flex-wrap:wrap;}
+    .market-title{font-size:18px;font-weight:800;color:#f0b429;}
+    .market-sub{color:#9aabbf;font-size:12.5px;margin-top:4px;line-height:1.5;}
+    .market-metrics{display:flex;gap:10px;flex-wrap:wrap;}
+    .market-metrics .mm{background:#1a2332;border:1px solid #2a3a4f;border-radius:8px;padding:8px 10px;min-width:110px;}
+    .market-metrics .lab{color:#8fa0b5;font-size:11px;}
+    .market-metrics .val{font-weight:700;margin-top:2px;font-size:16px;}
+    .market-metrics .val.small{font-size:12px;font-weight:600;}
     .ov-head,.ov-row{display:grid;grid-template-columns:54px 120px 170px repeat(6,1fr) 72px;gap:8px;align-items:center;}
     .ov-head{padding:8px;color:#8fa0b5;font-size:12px;border-bottom:1px solid #2f3e52;margin-bottom:4px;}
     .ov-row{padding:10px 8px;border-bottom:1px solid #243247;}
@@ -1082,7 +1265,11 @@ def main():
     header_html = render_header(asof, len(result), show=False)
 
     print('[4/4] 生成HTML报告...')
-    pbar.reset(max(show_n, 1), desc='4/4 生成报告图文', info='共 %d 只' % show_n)
+    pbar.reset(max(show_n + 1, 1), desc='4/4 生成报告图文', info='先绘大盘对照')
+    market_b64, market_stats = plot_market_kline(asof, return_base64=True)
+    market_html = market_panel_html(market_b64, market_stats)
+    pbar.set(1, info='大盘图完成，开始个股')
+
     blocks_html = []
     overview_rows = []
     for i in range(show_n):
@@ -1095,10 +1282,10 @@ def main():
         )
         overview_rows.append(info)
         blocks_html.append(stock_block_html(i + 1, info, img_b64))
-        pbar.set(i + 1, info='%s %s' % (info['code'], info['name']))
+        pbar.set(i + 2, info='%s %s' % (info['code'], info['name']))
     pbar.close(info='报告图文已生成')
 
-    summary_html = summary_table_html(overview_rows)
+    summary_html = market_html + summary_table_html(overview_rows)
     fname, nbytes = save_html_report(
         asof, len(result), header_html, summary_html, blocks_html, result['code'].tolist()
     )
