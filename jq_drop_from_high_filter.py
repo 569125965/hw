@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # ============================================================
-# 版本: v22-20260806
-# 相对 v21:
-#   1) HTML 报告页眉不再展示作者信息；页脚改为「如有问题，请与作者…联系」
+# 版本: v23-20260806
+# 相对 v22:
+#   1) 距高点回撤区间由 35%~75% 收紧为 60%~75%
 # ------------------------------------------------------------
 # 作者: rouser / 569125965@qq.com
 # ------------------------------------------------------------
@@ -14,14 +14,14 @@
 #    - 近约8个月（168个交易日）窗口内寻找高点与后低
 #    - 高点->后低回撤 >= 55%（曾超跌）
 #    - 后低->现价反弹 >= 10%（已回升）
-#    - 现价相对高点回撤仍在 35%~75%（没涨回去，也没跌废）
+#    - 现价相对高点回撤仍在 60%~75%（仍处深跌区，尚未大幅修复）
 #    - 近5日均量 / 下跌期均量 >= 1.2（回升放量）
 #    - 排除 ST/退市风险名、停牌、次新、北交所、高负债/资不抵债等
 # 3) 排序：量能放大倍数 -> 反弹幅度 -> 超跌深度（越大越靠前）
 # 4) 板块对比：申万一级行业归一K + 窗口收益/相对强弱/相关性/契合标签
 # 5) 输出：Notebook 进度条；HTML 报告含大盘对照、排序总览、个股详情
-# 6) 用法：聚宽「投资研究」整段粘贴运行；确认版本号 v22-20260806；
-#    下载 oversold_rebound_report_v22_*.html
+# 6) 用法：聚宽「投资研究」整段粘贴运行；确认版本号 v23-20260806；
+#    下载 oversold_rebound_report_v23_*.html
 # ============================================================
 
 # 聚宽研究：API 靠 star import 注入；显式 import 单名会 ImportError。
@@ -41,7 +41,7 @@ import matplotlib.dates as mdates
 from matplotlib.patches import Rectangle
 from IPython.display import display, HTML, FileLink
 
-VERSION = 'v22-20260806'
+VERSION = 'v23-20260806'
 AUTHOR_NAME = 'rouser'
 AUTHOR_EMAIL = '569125965@qq.com'
 AUTHOR_LINE = '%s / %s' % (AUTHOR_NAME, AUTHOR_EMAIL)
@@ -157,7 +157,7 @@ class ProgressBar(object):
 LOOKBACK_MAX_DAYS = 168
 MIN_DD = 0.55
 MIN_BOUNCE = 0.10
-MIN_CUR_DD = 0.35
+MIN_CUR_DD = 0.60
 MAX_CUR_DD = 0.75
 MIN_DAYS_AFTER_LOW = 3
 RECENT_VOL_DAYS = 5
