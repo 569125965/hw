@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 # ============================================================
-# 版本: v15-20260806
+# 版本: v16-20260806
+# 相对 v15:
+#   1) 修复大盘对照不显示：强化指数取数（字符串/区间/多指数回退），异常可见
+#   2) 大盘日K嵌入「排序总览」框内顶部，避免独立面板被漏看
 # 相对 v14:
-#   1) 增加作者信息：rouser / 569125965@qq.com（脚本头、报告页眉页脚、运行输出）
+#   - 作者信息：rouser / 569125965@qq.com
 # 相对 v13:
-#   - HTML 报告在「排序总览」上方增加窗口期大盘日K（默认上证指数+成交量）
-#   - 标注窗口收益/最大回撤/高低点日期，方便对照个股
-# 相对 v12:
-#   - Notebook 可视化进度条（四阶段共用一条；不支持则 ASCII）
+#   - 窗口期大盘日K对照；Notebook 可视化进度条
 # ------------------------------------------------------------
 # 作者: rouser / 569125965@qq.com
 # ------------------------------------------------------------
@@ -30,15 +30,15 @@
 # 5) 输出：
 #    - 研究环境用可视化进度条显示进度，不刷屏图文
 #    - 生成可下载 HTML 报告：
-#      a. 窗口期大盘日K（对照用）
-#      b. 顶部“排序总览”（含个股/板块迷你走势，可点详情跳转）
+#      a. 排序总览内嵌窗口期大盘日K（对照用）
+#      b. 排序列表（含个股/板块迷你走势，可点详情跳转）
 #      c. 下方每只股票完整详情（指标卡 + 摘要 + 个股日K/板块日K/成交量）
 #      d. 详情页可“回到顶部”
 # 6) 使用方法：
 #    复制到聚宽「投资研究」Notebook 整段运行；
-#    确认首行输出版本号为 v15-20260806；
-#    结束后下载生成的 oversold_rebound_report_v15_*.html
-# 用法: 聚宽「投资研究」整段粘贴，确认版本号 v15-20260806
+#    确认首行输出版本号为 v16-20260806；
+#    结束后下载生成的 oversold_rebound_report_v16_*.html
+# 用法: 聚宽「投资研究」整段粘贴，确认版本号 v16-20260806
 # ============================================================
 
 from jqdata import *
@@ -56,7 +56,7 @@ import matplotlib.dates as mdates
 from matplotlib.patches import Rectangle
 from IPython.display import display, HTML, FileLink
 
-VERSION = 'v15-20260806'
+VERSION = 'v16-20260806'
 AUTHOR_NAME = 'rouser'
 AUTHOR_EMAIL = '569125965@qq.com'
 AUTHOR_LINE = '%s / %s' % (AUTHOR_NAME, AUTHOR_EMAIL)
@@ -185,9 +185,14 @@ CHECK_CODE = '600418.XSHG'
 MAX_SHOW = 30
 INDUSTRY_TYPE = 'sw_l1'
 INDUSTRY_PEER_LIMIT = 40
-# 报告顶部对照用大盘指数（聚宽指数代码）
+# 报告顶部对照用大盘指数（聚宽指数代码）；取数失败时按顺序回退
 MARKET_INDEX = '000001.XSHG'
 MARKET_NAME = '上证指数'
+MARKET_FALLBACKS = [
+    ('000001.XSHG', '上证指数'),
+    ('000300.XSHG', '沪深300'),
+    ('399001.XSHE', '深证成指'),
+]
 # =================================================
 
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Arial Unicode MS', 'DejaVu Sans']
@@ -595,21 +600,140 @@ def fig_to_base64(fig):
     return base64.b64encode(buf.read()).decode('ascii')
 
 
-def fetch_market_ohlc(asof, count=LOOKBACK_MAX_DAYS):
-    """取窗口期大盘日K（OHLCV）。"""
-    df = fetch_price(
-        [MARKET_INDEX], asof, count,
-        ['open', 'high', 'low', 'close', 'volume']
-    )
-    if df is None or df.empty:
+def _normalize_ohlc_df(df, prefer_code=None):
+    """把 get_price 各种返回形态统一成含 time/open/high/low/close[/volume] 的长表。"""
+    if df is None:
         return pd.DataFrame()
+    # Panel（旧环境）
+    try:
+        import types
+        # pandas.Panel 在新版本已移除；用鸭子判断
+        if hasattr(df, 'minor_axis') and hasattr(df, 'to_frame'):
+            try:
+                df = df.to_frame().reset_index()
+            except Exception:
+                pass
+    except Exception:
+        pass
+    if not hasattr(df, 'empty'):
+        return pd.DataFrame()
+    if df is None or (hasattr(df, 'empty') and df.empty):
+        return pd.DataFrame()
+
     g = df.copy()
-    if 'code' in g.columns:
-        g = g[g['code'] == MARKET_INDEX]
+    if 'time' not in g.columns:
+        g = g.reset_index()
+        renamed = False
+        for cand in ('time', 'date', 'index', 'level_0'):
+            if cand in g.columns:
+                if cand != 'time':
+                    g = g.rename(columns={cand: 'time'})
+                renamed = True
+                break
+        if not renamed and g.index.name in (None, 'time', 'date'):
+            pass
+    if prefer_code is not None:
+        if 'code' in g.columns:
+            # 兼容 code 列类型/空白
+            codes = g['code'].astype(str).str.strip()
+            hit = g[codes == str(prefer_code)]
+            if not hit.empty:
+                g = hit
+            else:
+                # 有的环境指数 code 不带后缀
+                short = str(prefer_code).split('.')[0]
+                hit2 = g[codes.str.startswith(short)]
+                if not hit2.empty:
+                    g = hit2
+        else:
+            g['code'] = prefer_code
+
+    need = ['open', 'high', 'low', 'close']
+    for col in need:
+        if col not in g.columns:
+            return pd.DataFrame()
+    g = g.dropna(subset=need, how='any')
+    if g.empty:
+        return pd.DataFrame()
     g = g.sort_values('time').reset_index(drop=True)
-    if len(g) > count:
-        g = g.iloc[-count:].reset_index(drop=True)
     return g
+
+
+def _get_price_index(security, asof, count):
+    """多种方式尝试取指数行情。"""
+    end_s = to_date_str(asof)
+    fields_list = [
+        ['open', 'high', 'low', 'close', 'volume'],
+        ['open', 'high', 'low', 'close'],
+        None,
+    ]
+    attempts = []
+    # 1) 字符串 + count + fq=None（指数推荐）
+    for fields in fields_list:
+        kw = dict(end_date=end_s, count=count, frequency='daily', fq=None)
+        if fields is not None:
+            kw['fields'] = fields
+        attempts.append(('str+count+fqNone', security, kw))
+    # 2) 字符串 + count（默认 fq）
+    attempts.append(('str+count', security, dict(
+        end_date=end_s, count=count, frequency='daily',
+        fields=['open', 'high', 'low', 'close', 'volume']
+    )))
+    # 3) 列表 + panel=False + count
+    attempts.append(('list+panelFalse', [security], dict(
+        end_date=end_s, count=count, frequency='daily',
+        fields=['open', 'high', 'low', 'close', 'volume'], panel=False, fq=None
+    )))
+    # 4) start_date/end_date 区间
+    start_s = to_date_str(to_date(asof) - timedelta(days=int(count * 1.8) + 20))
+    attempts.append(('str+range', security, dict(
+        start_date=start_s, end_date=end_s, frequency='daily',
+        fields=['open', 'high', 'low', 'close', 'volume'], fq=None
+    )))
+
+    errors = []
+    for tag, sec, kw in attempts:
+        try:
+            raw = get_price(sec, **kw)
+            g = _normalize_ohlc_df(raw, prefer_code=security)
+            if g is not None and not g.empty and len(g) >= 5:
+                if len(g) > count:
+                    g = g.iloc[-count:].reset_index(drop=True)
+                print('      大盘取数成功: %s via %s, rows=%d' % (security, tag, len(g)))
+                return g, None
+            errors.append('%s:empty' % tag)
+        except Exception as e:
+            errors.append('%s:%s' % (tag, str(e)[:80]))
+    return pd.DataFrame(), errors
+
+
+def fetch_market_ohlc(asof, count=LOOKBACK_MAX_DAYS):
+    """取窗口期大盘日K（OHLCV），失败时按 MARKET_FALLBACKS 回退。"""
+    tried = []
+    # 优先当前配置，再走回退列表
+    ordered = [(MARKET_INDEX, MARKET_NAME)]
+    for code, name in MARKET_FALLBACKS:
+        if code != MARKET_INDEX:
+            ordered.append((code, name))
+
+    all_errors = []
+    for code, name in ordered:
+        g, errs = _get_price_index(code, asof, count)
+        if g is not None and not g.empty:
+            # 写回实际使用的指数，供标题展示
+            global MARKET_INDEX, MARKET_NAME
+            MARKET_INDEX = code
+            MARKET_NAME = name
+            g.attrs = getattr(g, 'attrs', {})
+            return g, None
+        tried.append(code)
+        if errs:
+            all_errors.extend(['%s[%s]' % (code, e) for e in errs])
+        else:
+            all_errors.append('%s:no_data' % code)
+    msg = '；'.join(all_errors[:8]) if all_errors else 'unknown'
+    print('      大盘取数失败:', msg)
+    return pd.DataFrame(), msg
 
 
 def calc_market_stats(df):
@@ -621,13 +745,11 @@ def calc_market_stats(df):
     l = df['low'].astype(float).values
     times = pd.to_datetime(df['time'])
     ret = float(c[-1] / c[0] - 1.0) if c[0] else float('nan')
-    # 用收盘价滚动峰值回撤
     peak_so_far = np.maximum.accumulate(c)
-    dd = 1.0 - c / peak_so_far
+    dd = 1.0 - c / np.where(peak_so_far == 0, np.nan, peak_so_far)
     max_dd = float(np.nanmax(dd))
     idx_hi = int(np.nanargmax(h))
     idx_lo = int(np.nanargmin(l))
-    # 若低点在高点前，仍保留真实高低点；另找高点后的最低点作「峰后回撤」参考
     after = l[idx_hi:]
     idx_lo_after = idx_hi + int(np.nanargmin(after)) if len(after) else idx_lo
     peak_to_trough = float(1.0 - l[idx_lo_after] / h[idx_hi]) if h[idx_hi] else float('nan')
@@ -647,101 +769,127 @@ def calc_market_stats(df):
         'idx_hi': idx_hi,
         'idx_lo': idx_lo,
         'idx_lo_after': idx_lo_after,
+        'index_code': MARKET_INDEX,
+        'index_name': MARKET_NAME,
     }
 
 
 def plot_market_kline(asof, return_base64=True):
     """
     绘制窗口期大盘日K + 成交量。
-    返回 (base64_png 或 None, stats_dict 或 None)
+    返回 (base64_png 或 None, stats_dict 或 None, err_msg 或 None)
     """
-    df = fetch_market_ohlc(asof, LOOKBACK_MAX_DAYS)
-    stats = calc_market_stats(df)
-    if stats is None:
-        return None, None
+    try:
+        df, err = fetch_market_ohlc(asof, LOOKBACK_MAX_DAYS)
+        stats = calc_market_stats(df)
+        if stats is None:
+            return None, None, err or '指数行情为空或不足5日'
 
-    times = pd.to_datetime(df['time'])
-    x = np.arange(len(df))
-    o = df['open'].astype(float).values
-    h = df['high'].astype(float).values
-    l = df['low'].astype(float).values
-    c = df['close'].astype(float).values
-    vol = df['volume'].astype(float).values if 'volume' in df.columns else np.zeros(len(df))
+        times = pd.to_datetime(df['time'])
+        x = np.arange(len(df))
+        o = df['open'].astype(float).values
+        h = df['high'].astype(float).values
+        l = df['low'].astype(float).values
+        c = df['close'].astype(float).values
+        if 'volume' in df.columns:
+            vol = pd.to_numeric(df['volume'], errors='coerce').fillna(0.0).astype(float).values
+        else:
+            vol = np.zeros(len(df))
 
-    fig = plt.figure(figsize=(11.8, 4.6))
-    gs = fig.add_gridspec(2, 1, height_ratios=[2.6, 1.0], hspace=0.08)
-    ax1 = fig.add_subplot(gs[0, 0])
-    ax2 = fig.add_subplot(gs[1, 0], sharex=ax1)
+        # 兼容旧 matplotlib：优先 gridspec，失败则 subplot
+        fig = plt.figure(figsize=(11.8, 4.8))
+        try:
+            gs = fig.add_gridspec(2, 1, height_ratios=[2.6, 1.0], hspace=0.08)
+            ax1 = fig.add_subplot(gs[0, 0])
+            ax2 = fig.add_subplot(gs[1, 0], sharex=ax1)
+        except Exception:
+            ax1 = fig.add_subplot(2, 1, 1)
+            ax2 = fig.add_subplot(2, 1, 2, sharex=ax1)
 
-    draw_candles(ax1, x, o, h, l, c, width=0.65)
-    ax1.axvline(stats['idx_hi'], color='#ff6b6b', ls='--', lw=1, alpha=0.85)
-    ax1.axvline(stats['idx_lo_after'], color='#3dd68c', ls='--', lw=1, alpha=0.85)
-    ax1.axvspan(stats['idx_hi'], stats['idx_lo_after'], color='#ff6b6b', alpha=0.05)
-    ax1.set_ylabel('指数点位')
-    ax1.grid(True, alpha=0.18, color='#6b7c93')
-    ax1.tick_params(labelbottom=False)
-    ret_s = ('%+.2f%%' % stats['ret_pct']) if stats.get('ret_pct') is not None else 'N/A'
-    dd_s = ('%.2f%%' % stats['max_dd_pct']) if stats.get('max_dd_pct') is not None else 'N/A'
-    pt_s = ('%.2f%%' % stats['peak_to_trough_pct']) if stats.get('peak_to_trough_pct') is not None else 'N/A'
-    ax1.set_title(
-        '大盘对照  %s（%s）  |  %s ~ %s  |  窗口收益 %s  |  收盘最大回撤 %s  |  峰→谷 %s' % (
-            MARKET_NAME, MARKET_INDEX,
-            stats['start_date'], stats['end_date'],
-            ret_s, dd_s, pt_s
-        ),
-        loc='left', fontsize=12, color='#e7ecf3', pad=8
-    )
-    # 高低点标注
-    ax1.annotate(
-        '高 %.0f' % stats['high'],
-        xy=(stats['idx_hi'], stats['high']),
-        xytext=(0, 8), textcoords='offset points',
-        color='#ff6b6b', fontsize=8, ha='center'
-    )
-    ax1.annotate(
-        '低 %.0f' % float(l[stats['idx_lo_after']]),
-        xy=(stats['idx_lo_after'], float(l[stats['idx_lo_after']])),
-        xytext=(0, -12), textcoords='offset points',
-        color='#3dd68c', fontsize=8, ha='center'
-    )
+        draw_candles(ax1, x, o, h, l, c, width=0.65)
+        ax1.axvline(stats['idx_hi'], color='#ff6b6b', ls='--', lw=1, alpha=0.85)
+        ax1.axvline(stats['idx_lo_after'], color='#3dd68c', ls='--', lw=1, alpha=0.85)
+        ax1.axvspan(stats['idx_hi'], stats['idx_lo_after'], color='#ff6b6b', alpha=0.05)
+        ax1.set_ylabel('指数点位')
+        ax1.grid(True, alpha=0.18, color='#6b7c93')
+        ax1.tick_params(labelbottom=False)
+        ret_s = ('%+.2f%%' % stats['ret_pct']) if stats.get('ret_pct') is not None else 'N/A'
+        dd_s = ('%.2f%%' % stats['max_dd_pct']) if stats.get('max_dd_pct') is not None else 'N/A'
+        pt_s = ('%.2f%%' % stats['peak_to_trough_pct']) if stats.get('peak_to_trough_pct') is not None else 'N/A'
+        ax1.set_title(
+            '大盘对照  %s（%s）  |  %s ~ %s  |  窗口收益 %s  |  收盘最大回撤 %s  |  峰→谷 %s' % (
+                MARKET_NAME, MARKET_INDEX,
+                stats['start_date'], stats['end_date'],
+                ret_s, dd_s, pt_s
+            ),
+            loc='left', fontsize=11, color='#e7ecf3', pad=8
+        )
+        ax1.annotate(
+            '高 %.0f' % stats['high'],
+            xy=(stats['idx_hi'], stats['high']),
+            xytext=(0, 8), textcoords='offset points',
+            color='#ff6b6b', fontsize=8, ha='center'
+        )
+        ax1.annotate(
+            '低 %.0f' % float(l[stats['idx_lo_after']]),
+            xy=(stats['idx_lo_after'], float(l[stats['idx_lo_after']])),
+            xytext=(0, -12), textcoords='offset points',
+            color='#3dd68c', fontsize=8, ha='center'
+        )
 
-    delta = np.diff(c)
-    delta = np.concatenate([[0.0], delta])
-    colors = np.where(delta >= 0, '#3dd68c', '#ff6b6b')
-    ax2.bar(x, vol, color=colors, width=0.7, alpha=0.8)
-    ax2.set_ylabel('成交量')
-    ax2.grid(True, alpha=0.15, color='#6b7c93')
-    ticks = np.linspace(0, len(x) - 1, num=6, dtype=int)
-    ax2.set_xticks(ticks)
-    ax2.set_xticklabels([times.iloc[i].strftime('%Y-%m-%d') for i in ticks], fontsize=8)
+        delta = np.diff(c)
+        delta = np.concatenate([[0.0], delta])
+        colors = np.where(delta >= 0, '#3dd68c', '#ff6b6b')
+        ax2.bar(x, vol, color=colors, width=0.7, alpha=0.8)
+        ax2.set_ylabel('成交量')
+        ax2.grid(True, alpha=0.15, color='#6b7c93')
+        ticks = np.linspace(0, len(x) - 1, num=6, dtype=int)
+        ax2.set_xticks(ticks)
+        ax2.set_xticklabels([times.iloc[i].strftime('%Y-%m-%d') for i in ticks], fontsize=8)
 
-    fig.subplots_adjust(left=0.07, right=0.985, top=0.90, bottom=0.10, hspace=0.10)
-    b64 = fig_to_base64(fig) if return_base64 else None
-    plt.close(fig)
-    return b64, stats
+        fig.subplots_adjust(left=0.07, right=0.985, top=0.88, bottom=0.10, hspace=0.12)
+        b64 = fig_to_base64(fig) if return_base64 else None
+        plt.close(fig)
+        if not b64:
+            return None, stats, '图片编码失败'
+        print('      大盘图已生成: %s %s, png≈%.1fKB' % (
+            MARKET_NAME, MARKET_INDEX, len(b64) * 3 / 4 / 1024.0))
+        return b64, stats, None
+    except Exception as e:
+        try:
+            plt.close('all')
+        except Exception:
+            pass
+        print('      大盘绘图异常:', repr(e))
+        return None, None, '绘图异常: %s' % str(e)
 
 
-def market_panel_html(img_b64, stats):
-    """排序总览上方的大盘对照面板。"""
+def market_panel_html(img_b64, stats, err_msg=None):
+    """排序总览内嵌的大盘对照区块。"""
     if not img_b64 or not stats:
+        detail = err_msg or ('未能获取 %s（%s）行情' % (MARKET_NAME, MARKET_INDEX))
         return """
-        <div class="market-panel" id="top">
+        <div class="market-box">
           <div class="market-head">
-            <div class="market-title">窗口期大盘对照</div>
-            <div class="market-sub">未能获取 %s（%s）行情，跳过本图。</div>
+            <div>
+              <div class="market-title">窗口期大盘对照</div>
+              <div class="market-sub" style="color:#ff6b6b;">未显示原因：{detail}</div>
+            </div>
           </div>
         </div>
-        """ % (_esc(MARKET_NAME), _esc(MARKET_INDEX))
+        """.format(detail=_esc(detail))
 
     ret_s = ('%+.2f%%' % stats['ret_pct']) if stats.get('ret_pct') is not None else 'N/A'
     dd_s = ('%.2f%%' % stats['max_dd_pct']) if stats.get('max_dd_pct') is not None else 'N/A'
     pt_s = ('%.2f%%' % stats['peak_to_trough_pct']) if stats.get('peak_to_trough_pct') is not None else 'N/A'
     ret_cls = 'green' if (stats.get('ret_pct') or 0) >= 0 else 'red'
+    name = stats.get('index_name') or MARKET_NAME
+    code = stats.get('index_code') or MARKET_INDEX
     return """
-    <div class="market-panel" id="top">
+    <div class="market-box">
       <div class="market-head">
         <div>
-          <div class="market-title">窗口期大盘对照 · {name}</div>
+          <div class="market-title">窗口期大盘对照 · {name}（{code}）</div>
           <div class="market-sub">
             {start} ~ {end}（{n} 个交易日）· 与下方个股同一回看窗口，便于对照大盘环境
           </div>
@@ -753,10 +901,10 @@ def market_panel_html(img_b64, stats):
           <div class="mm"><div class="lab">高点 / 低点</div><div class="val small">{hi} / {lo}</div></div>
         </div>
       </div>
-      <img class="chart" src="data:image/png;base64,{img}" alt="market-kline"/>
+      <img class="chart market-chart" src="data:image/png;base64,{img}" alt="market-kline"/>
     </div>
     """.format(
-        name=_esc(MARKET_NAME),
+        name=_esc(name), code=_esc(code),
         start=_esc(stats['start_date']), end=_esc(stats['end_date']), n=stats['n'],
         ret=_esc(ret_s), dd=_esc(dd_s), pt=_esc(pt_s), ret_cls=ret_cls,
         hi=_esc(stats['high_date']), lo=_esc(stats['low_date']),
@@ -937,10 +1085,10 @@ def _esc(s):
              .replace('"', '&quot;'))
 
 
-def summary_table_html(rows):
+def summary_table_html(rows, market_html=''):
     """
     排序总览（div列表，不用table，兼容性更好）
-    含迷你走势 + 详情锚点跳转
+    顶部内嵌大盘对照 + 迷你走势 + 详情锚点跳转
     """
     items = []
     for r in rows:
@@ -975,14 +1123,15 @@ def summary_table_html(rows):
         ))
 
     return """
-    <div id="overview" class="overview">
+    <div id="top" class="overview">
       <div class="overview-head">
         <div>
           <div class="overview-title">排序总览</div>
-          <div class="overview-sub">上方为大盘窗口期日K对照；先看列表比较，再点「详情」跳到下方完整K线；任一详情页可点「回到顶部」返回大盘与总览。</div>
+          <div class="overview-sub">下方先看窗口期大盘日K，再比较列表；点「详情」跳到完整K线；详情页可「回到顶部」。</div>
         </div>
         <div class="overview-count">共 {n} 只</div>
       </div>
+      {market}
       <div class="ov-head">
         <div class="ov-rank">排名</div>
         <div class="ov-name">股票</div>
@@ -997,7 +1146,7 @@ def summary_table_html(rows):
       </div>
       {items}
     </div>
-    """.format(n=len(rows), items='\n'.join(items))
+    """.format(n=len(rows), market=market_html or '', items='\n'.join(items))
 
 
 def stock_block_html(rank, info, img_b64):
@@ -1148,15 +1297,17 @@ def save_html_report(asof, total, header_html, summary_html, blocks_html, code_l
     .overview-title{font-size:20px;font-weight:800;color:#4da3ff;}
     .overview-sub{color:#9aabbf;font-size:12.5px;margin-top:4px;line-height:1.5;}
     .overview-count{background:#1a2332;border:1px solid #2f3e52;border-radius:999px;padding:6px 12px;color:#3dd68c;font-weight:700;white-space:nowrap;}
-    .market-panel{background:#121821;border:1px solid #2f3e52;border-radius:14px;padding:16px;margin:8px 0 18px 0;}
+    .market-panel{background:#0f1419;border:1px solid #f0b429;border-radius:10px;padding:12px;margin:8px 0 16px 0;}
+    .market-box{background:#0f1419;border:1px solid #f0b429;border-radius:10px;padding:12px;margin:4px 0 16px 0;}
     .market-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:10px;flex-wrap:wrap;}
-    .market-title{font-size:18px;font-weight:800;color:#f0b429;}
+    .market-title{font-size:16px;font-weight:800;color:#f0b429;}
     .market-sub{color:#9aabbf;font-size:12.5px;margin-top:4px;line-height:1.5;}
     .market-metrics{display:flex;gap:10px;flex-wrap:wrap;}
     .market-metrics .mm{background:#1a2332;border:1px solid #2a3a4f;border-radius:8px;padding:8px 10px;min-width:110px;}
     .market-metrics .lab{color:#8fa0b5;font-size:11px;}
     .market-metrics .val{font-weight:700;margin-top:2px;font-size:16px;}
     .market-metrics .val.small{font-size:12px;font-weight:600;}
+    .market-chart{margin-top:8px;border:1px solid #3a4d66;}
     .ov-head,.ov-row{display:grid;grid-template-columns:54px 120px 170px repeat(6,1fr) 72px;gap:8px;align-items:center;}
     .ov-head{padding:8px;color:#8fa0b5;font-size:12px;border-bottom:1px solid #2f3e52;margin-bottom:4px;}
     .ov-row{padding:10px 8px;border-bottom:1px solid #243247;}
@@ -1283,9 +1434,13 @@ def main():
 
     print('[4/4] 生成HTML报告...')
     pbar.reset(max(show_n + 1, 1), desc='4/4 生成报告图文', info='先绘大盘对照')
-    market_b64, market_stats = plot_market_kline(asof, return_base64=True)
-    market_html = market_panel_html(market_b64, market_stats)
-    pbar.set(1, info='大盘图完成，开始个股')
+    market_b64, market_stats, market_err = plot_market_kline(asof, return_base64=True)
+    market_html = market_panel_html(market_b64, market_stats, err_msg=market_err)
+    if market_b64:
+        pbar.set(1, info='大盘图完成，开始个股')
+    else:
+        pbar.set(1, info='大盘图失败，继续个股')
+        print('      警告: 大盘对照未生成 ->', market_err)
 
     blocks_html = []
     overview_rows = []
@@ -1302,7 +1457,7 @@ def main():
         pbar.set(i + 2, info='%s %s' % (info['code'], info['name']))
     pbar.close(info='报告图文已生成')
 
-    summary_html = market_html + summary_table_html(overview_rows)
+    summary_html = summary_table_html(overview_rows, market_html=market_html)
     fname, nbytes = save_html_report(
         asof, len(result), header_html, summary_html, blocks_html, result['code'].tolist()
     )
