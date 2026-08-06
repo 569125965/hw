@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 # ============================================================
-# 版本: v17-20260806
-# 相对 v16:
-#   1) 修复 SyntaxError：不用 from jqdata import *，改为显式导入（兼容 Notebook 执行环境）
-#   2) 版本注释只保留相对上一版的变更，不再堆历史改进
+# 版本: v18-20260806
+# 相对 v17:
+#   1) 修复 SyntaxError：去掉函数内对 MARKET_INDEX/MARKET_NAME 的 global 赋值，改为返回值传递
 # ------------------------------------------------------------
 # 作者: rouser / 569125965@qq.com
 # ------------------------------------------------------------
@@ -21,8 +20,8 @@
 # 3) 排序：量能放大倍数 -> 反弹幅度 -> 超跌深度（越大越靠前）
 # 4) 板块对比：申万一级行业归一K + 窗口收益/相对强弱/相关性/契合标签
 # 5) 输出：Notebook 进度条；HTML 报告含大盘对照、排序总览、个股详情
-# 6) 用法：聚宽「投资研究」整段粘贴运行；确认版本号 v17-20260806；
-#    下载 oversold_rebound_report_v17_*.html
+# 6) 用法：聚宽「投资研究」整段粘贴运行；确认版本号 v18-20260806；
+#    下载 oversold_rebound_report_v18_*.html
 # ============================================================
 
 from jqdata import (
@@ -52,7 +51,7 @@ import matplotlib.dates as mdates
 from matplotlib.patches import Rectangle
 from IPython.display import display, HTML, FileLink
 
-VERSION = 'v17-20260806'
+VERSION = 'v18-20260806'
 AUTHOR_NAME = 'rouser'
 AUTHOR_EMAIL = '569125965@qq.com'
 AUTHOR_LINE = '%s / %s' % (AUTHOR_NAME, AUTHOR_EMAIL)
@@ -703,8 +702,9 @@ def _get_price_index(security, asof, count):
 
 
 def fetch_market_ohlc(asof, count=LOOKBACK_MAX_DAYS):
-    """取窗口期大盘日K（OHLCV），失败时按 MARKET_FALLBACKS 回退。"""
-    tried = []
+    """取窗口期大盘日K（OHLCV），失败时按 MARKET_FALLBACKS 回退。
+    返回: (df, index_code, index_name, err_msg)
+    """
     # 优先当前配置，再走回退列表
     ordered = [(MARKET_INDEX, MARKET_NAME)]
     for code, name in MARKET_FALLBACKS:
@@ -715,22 +715,17 @@ def fetch_market_ohlc(asof, count=LOOKBACK_MAX_DAYS):
     for code, name in ordered:
         g, errs = _get_price_index(code, asof, count)
         if g is not None and not g.empty:
-            # 写回实际使用的指数，供标题展示
-            global MARKET_INDEX, MARKET_NAME
-            MARKET_INDEX = code
-            MARKET_NAME = name
-            return g, None
-        tried.append(code)
+            return g, code, name, None
         if errs:
             all_errors.extend(['%s[%s]' % (code, e) for e in errs])
         else:
             all_errors.append('%s:no_data' % code)
     msg = '；'.join(all_errors[:8]) if all_errors else 'unknown'
     print('      大盘取数失败:', msg)
-    return pd.DataFrame(), msg
+    return pd.DataFrame(), None, None, msg
 
 
-def calc_market_stats(df):
+def calc_market_stats(df, index_code=None, index_name=None):
     """窗口收益、峰值回撤、高低点日期。"""
     if df is None or df.empty or len(df) < 5:
         return None
@@ -763,8 +758,8 @@ def calc_market_stats(df):
         'idx_hi': idx_hi,
         'idx_lo': idx_lo,
         'idx_lo_after': idx_lo_after,
-        'index_code': MARKET_INDEX,
-        'index_name': MARKET_NAME,
+        'index_code': index_code or MARKET_INDEX,
+        'index_name': index_name or MARKET_NAME,
     }
 
 
@@ -774,8 +769,8 @@ def plot_market_kline(asof, return_base64=True):
     返回 (base64_png 或 None, stats_dict 或 None, err_msg 或 None)
     """
     try:
-        df, err = fetch_market_ohlc(asof, LOOKBACK_MAX_DAYS)
-        stats = calc_market_stats(df)
+        df, idx_code, idx_name, err = fetch_market_ohlc(asof, LOOKBACK_MAX_DAYS)
+        stats = calc_market_stats(df, index_code=idx_code, index_name=idx_name)
         if stats is None:
             return None, None, err or '指数行情为空或不足5日'
 
@@ -812,7 +807,7 @@ def plot_market_kline(asof, return_base64=True):
         pt_s = ('%.2f%%' % stats['peak_to_trough_pct']) if stats.get('peak_to_trough_pct') is not None else 'N/A'
         ax1.set_title(
             '大盘对照  %s（%s）  |  %s ~ %s  |  窗口收益 %s  |  收盘最大回撤 %s  |  峰→谷 %s' % (
-                MARKET_NAME, MARKET_INDEX,
+                stats['index_name'], stats['index_code'],
                 stats['start_date'], stats['end_date'],
                 ret_s, dd_s, pt_s
             ),
@@ -847,7 +842,7 @@ def plot_market_kline(asof, return_base64=True):
         if not b64:
             return None, stats, '图片编码失败'
         print('      大盘图已生成: %s %s, png≈%.1fKB' % (
-            MARKET_NAME, MARKET_INDEX, len(b64) * 3 / 4 / 1024.0))
+            stats['index_name'], stats['index_code'], len(b64) * 3 / 4 / 1024.0))
         return b64, stats, None
     except Exception as e:
         try:
