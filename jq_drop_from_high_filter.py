@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 # ============================================================
-# 版本: v25-20260806
-# 相对 v24:
-#   1) 对照票未进榜时输出逐条诊断（峰谷跌幅 / 现价距高点 / 反弹 / 量能），避免混淆两套回撤指标
+# 版本: v26-20260806
+# 相对 v25:
+#   1) 纠正回撤口径：60%~75% 作用于「窗口高点→低点」(峰→谷)，不再误用到现价距高点
+#   2) 现价距高点改回宽松带 35%~80%，仅表示尚未完全收复
 # ------------------------------------------------------------
 # 作者: rouser / 569125965@qq.com
 # ------------------------------------------------------------
@@ -12,16 +13,16 @@
 #    类似江淮汽车这种：下行后开始反弹、且成交量放大的标的。
 # 2) 核心规则（默认）：
 #    - 近约8个月（168个交易日）窗口内寻找高点与后低
-#    - 高点->后低回撤 >= 55%（曾超跌）
+#    - 高点->后低回撤（峰→谷）在 60%~75%
 #    - 后低->现价反弹 >= 10%（已回升）
-#    - 现价相对高点回撤仍在 60%~75%（仍处深跌区，尚未大幅修复）
+#    - 现价相对高点仍回撤 35%~80%（尚未完全收复）
 #    - 近5日均量 / 下跌期均量 >= 1.2（回升放量）
 #    - 排除 ST/退市风险名、停牌、次新、北交所、高负债/资不抵债等
 # 3) 排序：量能放大倍数 -> 反弹幅度 -> 超跌深度（越大越靠前）
 # 4) 板块对比：申万一级行业归一K + 窗口收益/相对强弱/相关性/契合标签
 # 5) 输出：Notebook 进度条；HTML 报告含大盘对照、排序总览、个股详情
-# 6) 用法：聚宽「投资研究」整段粘贴运行；确认版本号 v25-20260806；
-#    下载 oversold_rebound_report_v25_*.html
+# 6) 用法：聚宽「投资研究」整段粘贴运行；确认版本号 v26-20260806；
+#    下载 oversold_rebound_report_v26_*.html
 # ============================================================
 
 # 聚宽研究：API 靠 star import 注入；显式 import 单名会 ImportError。
@@ -41,7 +42,7 @@ import matplotlib.dates as mdates
 from matplotlib.patches import Rectangle
 from IPython.display import display, HTML, FileLink
 
-VERSION = 'v25-20260806'
+VERSION = 'v26-20260806'
 AUTHOR_NAME = 'rouser'
 AUTHOR_EMAIL = '569125965@qq.com'
 AUTHOR_LINE = '%s / %s' % (AUTHOR_NAME, AUTHOR_EMAIL)
@@ -155,10 +156,13 @@ class ProgressBar(object):
             sys.stdout.flush()
 # ===================== 参数 =====================
 LOOKBACK_MAX_DAYS = 168
-MIN_DD = 0.55
+# 回撤 = 窗口内高点(high) → 其后最低点(low) 的幅度
+MIN_DD = 0.60
+MAX_DD = 0.75
 MIN_BOUNCE = 0.10
-MIN_CUR_DD = 0.60
-MAX_CUR_DD = 0.75
+# 现价相对高点：仅表示“还没涨回去”，与上面的峰→谷回撤不是同一指标
+MIN_CUR_DD = 0.35
+MAX_CUR_DD = 0.80
 MIN_DAYS_AFTER_LOW = 3
 RECENT_VOL_DAYS = 5
 MIN_VOL_AMPLIFY = 1.2
@@ -525,8 +529,12 @@ def score_one(g):
     decline_days = int(idx_low - idx_peak)
     if decline_days <= 0:
         return None
-    if max_dd < MIN_DD or bounce < MIN_BOUNCE:
+    # 回撤：窗口高点 → 其后谷底
+    if max_dd < MIN_DD or max_dd > MAX_DD:
         return None
+    if bounce < MIN_BOUNCE:
+        return None
+    # 现价距高点：尚未完全收复（与峰→谷回撤区分）
     if cur_dd < MIN_CUR_DD or cur_dd > MAX_CUR_DD:
         return None
 
@@ -1178,13 +1186,13 @@ def render_header(asof, total, show=False):
       </div>
       <div style="color:#9aabbf;margin-top:8px;font-size:13px;line-height:1.6;">
         版本 {ver} | 运行日 {asof} | 窗口 {lb} 交易日<br>
-        规则：曾超跌≥{dd:.0f}% · 回升≥{bounce:.0f}% · 距高点回撤[{cur1:.0f}%,{cur2:.0f}%] · 量能放大≥{vol:.1f}x<br>
+        规则：峰→谷回撤[{dd1:.0f}%,{dd2:.0f}%] · 回升≥{bounce:.0f}% · 现价距高点[{cur1:.0f}%,{cur2:.0f}%] · 量能≥{vol:.1f}x<br>
         排序：量能放大 → 反弹幅度 → 超跌深度 | 本次入选 <b style="color:#3dd68c">{n}</b> 只（展示前 {show}）
       </div>
     </div>
     """.format(
         ver=VERSION, asof=asof, lb=LOOKBACK_MAX_DAYS,
-        dd=MIN_DD * 100, bounce=MIN_BOUNCE * 100,
+        dd1=MIN_DD * 100, dd2=MAX_DD * 100, bounce=MIN_BOUNCE * 100,
         cur1=MIN_CUR_DD * 100, cur2=MAX_CUR_DD * 100,
         vol=MIN_VOL_AMPLIFY, n=total, show=min(total, MAX_SHOW)
     )
@@ -1281,13 +1289,14 @@ def diagnose_check_code(code, asof):
         len(window), peak, to_date_str(window['time'].iloc[idx_peak]),
         trough, to_date_str(window['time'].iloc[idx_low]), last_close
     ))
-    print('说明: 「58→19」对应的是 峰→谷 跌幅；入选另看 现价距高点回撤')
+    print('说明: 回撤=窗口高点→其后最低点；现价距高点=现价相对高点还跌多少（另一指标）')
     checks = [
-        ('峰→谷跌幅 ≥ %.0f%%' % (MIN_DD * 100), max_dd, max_dd >= MIN_DD,
+        ('峰→谷回撤 [%.0f%%, %.0f%%]' % (MIN_DD * 100, MAX_DD * 100), max_dd,
+         (max_dd >= MIN_DD and max_dd <= MAX_DD),
          '%.2f%%' % (max_dd * 100)),
         ('谷底反弹 ≥ %.0f%%' % (MIN_BOUNCE * 100), bounce, bounce >= MIN_BOUNCE,
          '%.2f%%' % (bounce * 100)),
-        ('现价距高点回撤 [%.0f%%, %.0f%%]' % (MIN_CUR_DD * 100, MAX_CUR_DD * 100),
+        ('现价距高点 [%.0f%%, %.0f%%]（非回撤主条件）' % (MIN_CUR_DD * 100, MAX_CUR_DD * 100),
          cur_dd, (cur_dd >= MIN_CUR_DD and cur_dd <= MAX_CUR_DD),
          '%.2f%%' % (cur_dd * 100)),
         ('低点后至少 %d 日' % MIN_DAYS_AFTER_LOW, days_since_low,
@@ -1452,6 +1461,7 @@ def main():
     result = select_stocks(safe, asof, pbar=pbar)
     if result.empty:
         print('未找到符合条件的股票')
+        diagnose_check_code(CHECK_CODE, asof)
         return result
     print('      入选 %d 只；将生成前 %d 只图文报告' % (len(result), min(len(result), MAX_SHOW)))
     if CHECK_CODE in set(result['code'].tolist()):
