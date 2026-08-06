@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 # ============================================================
-# 版本: v20-20260806
-# 相对 v19:
-#   1) 修复 ImportError：聚宽研究环境不能显式 from jqdata import get_price
-#      改回 star import，并用 exec 注入 globals（同时规避 import* 仅模块顶层限制）
+# 版本: v21-20260806
+# 相对 v20:
+#   1) 去掉误导性调试输出「最近交易日样本…类型: datetime.date」（打印的是列表却标成单日类型）
 # ------------------------------------------------------------
 # 作者: rouser / 569125965@qq.com
 # ------------------------------------------------------------
@@ -21,8 +20,8 @@
 # 3) 排序：量能放大倍数 -> 反弹幅度 -> 超跌深度（越大越靠前）
 # 4) 板块对比：申万一级行业归一K + 窗口收益/相对强弱/相关性/契合标签
 # 5) 输出：Notebook 进度条；HTML 报告含大盘对照、排序总览、个股详情
-# 6) 用法：聚宽「投资研究」整段粘贴运行；确认版本号 v20-20260806；
-#    下载 oversold_rebound_report_v20_*.html
+# 6) 用法：聚宽「投资研究」整段粘贴运行；确认版本号 v21-20260806；
+#    下载 oversold_rebound_report_v21_*.html
 # ============================================================
 
 # 聚宽研究：API 靠 star import 注入；显式 import 单名会 ImportError。
@@ -42,7 +41,7 @@ import matplotlib.dates as mdates
 from matplotlib.patches import Rectangle
 from IPython.display import display, HTML, FileLink
 
-VERSION = 'v20-20260806'
+VERSION = 'v21-20260806'
 AUTHOR_NAME = 'rouser'
 AUTHOR_EMAIL = '569125965@qq.com'
 AUTHOR_LINE = '%s / %s' % (AUTHOR_NAME, AUTHOR_EMAIL)
@@ -206,7 +205,8 @@ def to_date_str(d):
 
 def get_trade_date():
     days = get_trade_days(end_date=datetime.now().date(), count=5)
-    print('最近交易日样本:', list(days), '类型:', type(days[-1]))
+    if days is None or len(days) == 0:
+        raise RuntimeError('get_trade_days 未返回交易日')
     return to_date(days[-1])
 
 
