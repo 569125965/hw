@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 # ============================================================
-# 版本: v26-20260806
-# 相对 v25:
-#   1) 纠正回撤口径：60%~75% 作用于「窗口高点→低点」(峰→谷)，不再误用到现价距高点
-#   2) 现价距高点改回宽松带 35%~80%，仅表示尚未完全收复
+# 版本: v28-20260807
+# 相对 v26:
+#   1) 修复财务过滤误杀全市场：NaN/缺字段放行；整批通过率0则放行
+#   2) 对照票诊断增加前置过滤链路与财务红旗逐条说明
+#   3) 停牌过滤批次失败时降级/放行，避免整批丢光
 # ------------------------------------------------------------
 # 作者: rouser / 569125965@qq.com
 # ------------------------------------------------------------
@@ -17,16 +18,14 @@
 #    - 后低->现价反弹 >= 10%（已回升）
 #    - 现价相对高点仍回撤 35%~80%（尚未完全收复）
 #    - 近5日均量 / 下跌期均量 >= 1.2（回升放量）
-#    - 排除 ST/退市风险名、停牌、次新、北交所、高负债/资不抵债等
+#    - 排除 ST/退市风险名、停牌、次新、北交所；财务仅剔除明确红旗
 # 3) 排序：量能放大倍数 -> 反弹幅度 -> 超跌深度（越大越靠前）
 # 4) 板块对比：申万一级行业归一K + 窗口收益/相对强弱/相关性/契合标签
 # 5) 输出：Notebook 进度条；HTML 报告含大盘对照、排序总览、个股详情
-# 6) 用法：聚宽「投资研究」整段粘贴运行；确认版本号 v26-20260806；
-#    下载 oversold_rebound_report_v26_*.html
+# 6) 用法：聚宽「投资研究」整段粘贴运行；确认版本号 v28-20260807；
+#    下载 oversold_rebound_report_v28_*.html
 # ============================================================
 
-# 聚宽研究：API 靠 star import 注入；显式 import 单名会 ImportError。
-# 用 exec(..., globals()) 保证注入到当前全局，并避免“import* 仅模块顶层”语法限制。
 exec('from jqdata import *', globals())
 import pandas as pd
 import numpy as np
@@ -42,7 +41,7 @@ import matplotlib.dates as mdates
 from matplotlib.patches import Rectangle
 from IPython.display import display, HTML, FileLink
 
-VERSION = 'v26-20260806'
+VERSION = 'v28-20260807'
 AUTHOR_NAME = 'rouser'
 AUTHOR_EMAIL = '569125965@qq.com'
 AUTHOR_LINE = '%s / %s' % (AUTHOR_NAME, AUTHOR_EMAIL)
@@ -282,40 +281,179 @@ def get_universe(asof):
 
 
 def filter_paused(codes, asof):
+    """剔除停牌/无量。批次取数失败时降级小批次，避免整批误杀。"""
+    if not codes:
+        return []
     out = []
-    for i in range(0, len(codes), 500):
-        df = fetch_price(codes[i:i + 500], asof, 1, ['paused', 'volume'])
-        if df.empty:
+    batch_size = 500
+    i = 0
+    while i < len(codes):
+        part = codes[i:i + batch_size]
+        try:
+            df = fetch_price(part, asof, 1, ['paused', 'volume'])
+        except Exception as e:
+            df = pd.DataFrame()
+            print('      停牌过滤批次异常(size=%d): %s' % (len(part), e))
+        if df is None or df.empty:
+            if batch_size > 50:
+                batch_size = max(50, batch_size // 2)
+                print('      停牌过滤批次无数据，降级 batch=%d 重试' % batch_size)
+                continue
+            print('      警告: 停牌过滤仍无数据，本批 %d 只暂时保留' % len(part))
+            out.extend([str(c) for c in part])
+            i += len(part)
+            batch_size = 500
             continue
-        df = df[(df['paused'] == 0) & (df['volume'] > 0)]
-        out.extend(df['code'].tolist())
-    return out
+        if 'code' not in df.columns and len(part) == 1:
+            df = df.copy()
+            df['code'] = part[0]
+        if 'paused' in df.columns:
+            paused = pd.to_numeric(df['paused'], errors='coerce').fillna(1)
+        else:
+            paused = pd.Series(0, index=df.index)
+        if 'volume' in df.columns:
+            vol = pd.to_numeric(df['volume'], errors='coerce').fillna(0)
+        else:
+            vol = pd.Series(1, index=df.index)
+        keep = df[(paused == 0) & (vol > 0)]
+        if 'code' in keep.columns:
+            out.extend(keep['code'].astype(str).tolist())
+        i += len(part)
+        batch_size = 500
+    seen = set()
+    uniq = []
+    for c in out:
+        if c not in seen:
+            seen.add(c)
+            uniq.append(c)
+    return uniq
+
+
+def _norm_fund_df(fund):
+    if fund is None or (hasattr(fund, 'empty') and fund.empty):
+        return pd.DataFrame()
+    df = fund.copy()
+    if 'code' not in df.columns:
+        df = df.reset_index()
+        if 'code' not in df.columns:
+            for cand in ('index', 'level_0', 'security'):
+                if cand in df.columns:
+                    df = df.rename(columns={cand: 'code'})
+                    break
+    if 'code' not in df.columns:
+        return pd.DataFrame()
+    df['code'] = df['code'].astype(str)
+    return df
+
+
+def _eval_financial_flags(fund):
+    """只有明确违规才剔除；NaN/缺字段放行。market_cap=亿元，其余=元。"""
+    mcap = pd.to_numeric(fund.get('market_cap'), errors='coerce')
+    assets = pd.to_numeric(fund.get('total_assets'), errors='coerce').replace(0, np.nan)
+    liab = pd.to_numeric(fund.get('total_liability'), errors='coerce')
+    equity = pd.to_numeric(fund.get('equities_parent_company_owners'), errors='coerce')
+    profit = pd.to_numeric(fund.get('net_profit'), errors='coerce')
+    debt = liab / assets
+    loss_limit = -mcap * 1e8 * 0.3
+
+    equity_ok = ~(equity <= 0)
+    debt_ok = ~(debt >= 0.90)
+    mcap_ok = ~(mcap <= 15)
+    profit_ok = profit.isna() | loss_limit.isna() | (profit > loss_limit)
+    ok = equity_ok.fillna(True) & debt_ok.fillna(True) & mcap_ok.fillna(True) & profit_ok.fillna(True)
+    detail = {
+        'equity_ok': equity_ok, 'debt_ok': debt_ok, 'mcap_ok': mcap_ok, 'profit_ok': profit_ok,
+        'debt': debt, 'loss_limit': loss_limit, 'mcap': mcap, 'profit': profit, 'equity': equity,
+    }
+    return ok.fillna(True), detail
 
 
 def filter_financial_risk(codes, asof):
+    """财务红旗过滤。缺数放行；整批通过率0则整批放行。"""
     if not codes:
         return []
-    q = query(
-        valuation.code,
-        valuation.market_cap,
-        balance.total_assets,
-        balance.total_liability,
-        balance.equities_parent_company_owners,
-        income.net_profit,
-    ).filter(valuation.code.in_(codes))
-    fund = get_fundamentals(q, date=to_date_str(asof))
-    if fund is None or fund.empty:
-        return codes
-    fund = fund.set_index('code')
-    debt = fund['total_liability'] / fund['total_assets'].replace(0, np.nan)
-    loss_limit = -fund['market_cap'] * 1e8 * 0.3
-    ok = (
-        (fund['equities_parent_company_owners'] > 0) &
-        (debt < 0.90) &
-        (fund['market_cap'] > 15) &
-        (fund['net_profit'] > loss_limit)
-    )
-    return fund.index[ok].tolist()
+    codes = [str(c) for c in codes]
+    try:
+        q = query(
+            valuation.code,
+            valuation.market_cap,
+            balance.total_assets,
+            balance.total_liability,
+            balance.equities_parent_company_owners,
+            income.net_profit,
+        ).filter(valuation.code.in_(list(codes)))
+        fund = get_fundamentals(q, date=to_date_str(asof))
+    except Exception as e:
+        print('      财务过滤异常，本批放行:', e)
+        return list(codes)
+
+    fund = _norm_fund_df(fund)
+    if fund.empty:
+        return list(codes)
+
+    fund = fund.reset_index(drop=True)
+    ok, _ = _eval_financial_flags(fund)
+    ok = ok.reset_index(drop=True).astype(bool)
+    passed = fund.loc[ok, 'code'].astype(str).tolist()
+    have = set(fund['code'].astype(str).tolist())
+    missing = [c for c in codes if c not in have]
+    out = passed + missing
+
+    if len(codes) >= 50 and len(passed) == 0:
+        print('      警告: 财务过滤本批通过0/%d，疑似数据异常，本批放行' % len(codes))
+        return list(codes)
+    return out
+
+
+def explain_financial_for_code(code, asof):
+    try:
+        q = query(
+            valuation.code, valuation.market_cap,
+            balance.total_assets, balance.total_liability,
+            balance.equities_parent_company_owners, income.net_profit,
+        ).filter(valuation.code == code)
+        fund = get_fundamentals(q, date=to_date_str(asof))
+    except Exception as e:
+        print('  财务明细获取失败:', e)
+        return False
+    fund = _norm_fund_df(fund)
+    if fund.empty:
+        print('  财务明细: 无数据（按规则应放行）')
+        return True
+    ok, d = _eval_financial_flags(fund)
+    mcap, equity, debt = d['mcap'].iloc[0], d['equity'].iloc[0], d['debt'].iloc[0]
+    profit, loss_limit = d['profit'].iloc[0], d['loss_limit'].iloc[0]
+    print('  财务明细:')
+    print('    市值(亿)=%s  净资产=%s  负债/资产=%s' % (mcap, equity, debt))
+    print('    净利=%s  亏损上限=%s' % (profit, loss_limit))
+    print('    [股东权益>0]: %s' % ('通过' if (pd.isna(equity) or equity > 0) else '未过'))
+    print('    [资产负债率<90%%]: %s' % ('通过' if (pd.isna(debt) or debt < 0.90) else '未过'))
+    print('    [市值>15亿]: %s' % ('通过' if (pd.isna(mcap) or mcap > 15) else '未过'))
+    if pd.isna(profit) or pd.isna(loss_limit):
+        profit_txt = '通过(缺数放行)'
+    else:
+        profit_txt = '通过' if profit > loss_limit else '未过'
+    print('    [净利未巨亏]: %s' % profit_txt)
+    print('    综合: %s' % ('应通过财务过滤' if bool(ok.iloc[0]) else '应被财务过滤剔除'))
+    return bool(ok.iloc[0])
+
+
+def diagnose_pipeline_for_code(code, asof, universe, alive, safe):
+    print('前置过滤链路:')
+    print('  初筛股票池: %s' % ('在' if code in set(map(str, universe)) else '不在'))
+    print('  停牌过滤后: %s' % ('在' if code in set(map(str, alive)) else '不在'))
+    print('  财务过滤后: %s' % ('在' if code in set(map(str, safe)) else '不在'))
+    if code not in set(map(str, universe)):
+        print('  => 卡在初筛（ST/次新/北交所等）')
+        return 'universe'
+    if code not in set(map(str, alive)):
+        print('  => 卡在停牌/无量过滤')
+        return 'paused'
+    if code not in set(map(str, safe)):
+        explain_financial_for_code(code, asof)
+        print('  => 卡在财务红旗过滤')
+        return 'finance'
+    return 'morph'
 
 
 def calc_vol_amplify(window, idx_peak, idx_low):
@@ -1254,22 +1392,30 @@ def select_stocks(codes, asof, pbar=None):
     ).reset_index(drop=True)
 
 
-def diagnose_check_code(code, asof):
-    """对照票未入选时，打印关键指标与哪条规则未过（不依赖 score_one 成功）。"""
+def diagnose_check_code(code, asof, universe=None, alive=None, safe=None):
+    """对照票未入选时，打印前置链路 + 形态指标。"""
     try:
         name = get_security_info(code).display_name
     except Exception:
         name = code
-    hist = fetch_price([code], asof, LOOKBACK_MAX_DAYS + 5, ['open', 'high', 'low', 'close', 'volume'])
     print('\n----- 对照票诊断: %s %s -----' % (code, name))
+
+    stage = None
+    if universe is not None and alive is not None and safe is not None:
+        stage = diagnose_pipeline_for_code(code, asof, universe, alive, safe)
+
+    hist = fetch_price([code], asof, LOOKBACK_MAX_DAYS + 5, ['open', 'high', 'low', 'close', 'volume'])
     if hist is None or hist.empty:
-        print('无行情，无法诊断')
+        print('无行情，无法做形态诊断')
+        print('-------------------------------')
         return
 
     g = hist.sort_values('time').reset_index(drop=True)
+    info = score_one(g)
     window = g.iloc[-LOOKBACK_MAX_DAYS:].reset_index(drop=True)
     if len(window) < 30:
         print('窗口数据不足: %d 条' % len(window))
+        print('-------------------------------')
         return
 
     idx_peak = int(np.nanargmax(window['high'].values))
@@ -1285,36 +1431,38 @@ def diagnose_check_code(code, asof):
     days_since_low = len(window) - 1 - idx_low
     vol_amp, _, _, _ = calc_vol_amplify(window, idx_peak, idx_low)
 
-    print('窗口交易日: %d | 高点 %.3f (%s) | 谷底 %.3f (%s) | 现价 %.3f' % (
+    print('形态指标:')
+    print('  窗口交易日: %d | 高点 %.3f (%s) | 谷底 %.3f (%s) | 现价 %.3f' % (
         len(window), peak, to_date_str(window['time'].iloc[idx_peak]),
         trough, to_date_str(window['time'].iloc[idx_low]), last_close
     ))
-    print('说明: 回撤=窗口高点→其后最低点；现价距高点=现价相对高点还跌多少（另一指标）')
     checks = [
-        ('峰→谷回撤 [%.0f%%, %.0f%%]' % (MIN_DD * 100, MAX_DD * 100), max_dd,
-         (max_dd >= MIN_DD and max_dd <= MAX_DD),
-         '%.2f%%' % (max_dd * 100)),
-        ('谷底反弹 ≥ %.0f%%' % (MIN_BOUNCE * 100), bounce, bounce >= MIN_BOUNCE,
-         '%.2f%%' % (bounce * 100)),
-        ('现价距高点 [%.0f%%, %.0f%%]（非回撤主条件）' % (MIN_CUR_DD * 100, MAX_CUR_DD * 100),
-         cur_dd, (cur_dd >= MIN_CUR_DD and cur_dd <= MAX_CUR_DD),
-         '%.2f%%' % (cur_dd * 100)),
-        ('低点后至少 %d 日' % MIN_DAYS_AFTER_LOW, days_since_low,
+        ('峰→谷回撤 [%.0f%%, %.0f%%]' % (MIN_DD * 100, MAX_DD * 100),
+         (max_dd >= MIN_DD and max_dd <= MAX_DD), '%.2f%%' % (max_dd * 100)),
+        ('谷底反弹 ≥ %.0f%%' % (MIN_BOUNCE * 100),
+         bounce >= MIN_BOUNCE, '%.2f%%' % (bounce * 100)),
+        ('现价距高点 [%.0f%%, %.0f%%]' % (MIN_CUR_DD * 100, MAX_CUR_DD * 100),
+         (cur_dd >= MIN_CUR_DD and cur_dd <= MAX_CUR_DD), '%.2f%%' % (cur_dd * 100)),
+        ('低点后至少 %d 日' % MIN_DAYS_AFTER_LOW,
          days_since_low >= MIN_DAYS_AFTER_LOW, '%d 日' % days_since_low),
-        ('量能放大 ≥ %.1fx' % MIN_VOL_AMPLIFY, vol_amp,
+        ('量能放大 ≥ %.1fx' % MIN_VOL_AMPLIFY,
          np.isfinite(vol_amp) and vol_amp >= MIN_VOL_AMPLIFY,
          ('%.2fx' % vol_amp) if np.isfinite(vol_amp) else 'N/A'),
     ]
     fail = []
-    for label, _, ok, val in checks:
-        mark = '通过' if ok else '未过'
-        print('  [%s] %s = %s' % (mark, label, val))
+    for label, ok, val in checks:
+        print('  [%s] %s = %s' % ('通过' if ok else '未过', label, val))
         if not ok:
             fail.append(label)
-    if fail:
+    print('  score_one 结果: %s' % ('应入选' if info is not None else '不应入选'))
+    if stage in ('universe', 'paused', 'finance'):
+        print('=> 未进榜主因: 前置过滤（见上）')
+    elif fail:
         print('=> 未进榜主因: ' + '；'.join(fail))
+    elif info is not None:
+        print('=> 形态应入选；若榜单仍无，请看筛选池数量是否为0')
     else:
-        print('=> 形态条件都过，可能被停牌/ST/财务等前置过滤踢出')
+        print('=> 形态未通过 score_one')
     print('-------------------------------')
 
 
@@ -1432,44 +1580,53 @@ def main():
     pbar = ProgressBar(1, desc='准备中')
 
     print('[1/4] 构建股票池...')
-    codes = get_universe(asof)
-    if not codes:
+    universe = get_universe(asof)
+    if not universe:
         pbar.close(info='股票池为空')
         print('股票池为空')
         return pd.DataFrame()
 
-    pbar.reset(max(len(codes), 1), desc='1/4 剔除停牌', info='待处理 %d' % len(codes))
+    pbar.reset(max(len(universe), 1), desc='1/4 剔除停牌', info='待处理 %d' % len(universe))
     alive = []
-    for i in range(0, len(codes), 500):
-        part = codes[i:i + 500]
+    for i in range(0, len(universe), 500):
+        part = universe[i:i + 500]
         alive.extend(filter_paused(part, asof))
-        pbar.set(min(i + 500, len(codes)), info='保留 %d' % len(alive))
+        pbar.set(min(i + 500, len(universe)), info='保留 %d' % len(alive))
     pbar.close(info='剔除停牌后 %d' % len(alive))
-    codes = alive
+    print('      停牌过滤后:', len(alive))
+    if not alive:
+        print('停牌过滤后股票池为空，终止')
+        diagnose_check_code(CHECK_CODE, asof, universe, alive, [])
+        return pd.DataFrame()
 
     print('[2/4] 财务过滤...')
     safe = []
-    pbar.reset(max(len(codes), 1), desc='2/4 财务过滤', info='待处理 %d' % len(codes))
-    for i in range(0, len(codes), 800):
-        part = codes[i:i + 800]
+    pbar.reset(max(len(alive), 1), desc='2/4 财务过滤', info='待处理 %d' % len(alive))
+    for i in range(0, len(alive), 300):
+        part = alive[i:i + 300]
         safe.extend(filter_financial_risk(part, asof))
-        pbar.set(min(i + 800, len(codes)), info='保留 %d' % len(safe))
+        pbar.set(min(i + 300, len(alive)), info='保留 %d' % len(safe))
     pbar.close(info='财务过滤后 %d' % len(safe))
+    print('      财务过滤后:', len(safe))
+    if not safe:
+        print('财务过滤后股票池为空，终止')
+        diagnose_check_code(CHECK_CODE, asof, universe, alive, safe)
+        return pd.DataFrame()
 
     print('[3/4] 超跌回升+量能筛选...')
     pbar.reset(max(len(safe), 1), desc='3/4 超跌回升筛选', info='待筛选 %d' % len(safe))
     result = select_stocks(safe, asof, pbar=pbar)
     if result.empty:
-        print('未找到符合条件的股票')
-        diagnose_check_code(CHECK_CODE, asof)
+        print('未找到符合条件的股票（筛选池 %d 只）' % len(safe))
+        diagnose_check_code(CHECK_CODE, asof, universe, alive, safe)
         return result
     print('      入选 %d 只；将生成前 %d 只图文报告' % (len(result), min(len(result), MAX_SHOW)))
-    if CHECK_CODE in set(result['code'].tolist()):
+    if CHECK_CODE in set(result['code'].astype(str).tolist()):
         print('      对照票 %s 排名: %d' % (
-            CHECK_CODE, int(result.index[result['code'] == CHECK_CODE][0]) + 1))
+            CHECK_CODE, int(result.index[result['code'].astype(str) == CHECK_CODE][0]) + 1))
     else:
         print('      对照票 %s 未进榜' % CHECK_CODE)
-        diagnose_check_code(CHECK_CODE, asof)
+        diagnose_check_code(CHECK_CODE, asof, universe, alive, safe)
 
     show_n = min(len(result), MAX_SHOW)
     header_html = render_header(asof, len(result), show=False)
