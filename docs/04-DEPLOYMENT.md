@@ -43,18 +43,18 @@
 ### Windows
 
 ```bat
-scripts\start.cmd -Demo
+scripts\start.cmd
 scripts\stop.cmd
 ```
 
-不要直接运行 `start.ps1`（易被 ExecutionPolicy 拦截）；`.cmd` 已带 `-ExecutionPolicy Bypass`。
+默认实盘。不要直接运行 `start.ps1`（易被 ExecutionPolicy 拦截）；`.cmd` 已带 `-ExecutionPolicy Bypass`。
 
 ### Linux / macOS
 
 ```bash
-./scripts/start.sh          # 构建并启动 API + Web
+./scripts/start.sh          # 实盘启动 API + Web
 ./scripts/stop.sh           # 停止
-./scripts/start.sh --demo   # 强制演示数据（无外网行情时）
+./scripts/start.sh --demo   # 仅无外网时强制演示数据
 ```
 
 ## 5. 一键云部署

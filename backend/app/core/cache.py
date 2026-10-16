@@ -33,4 +33,16 @@ class TTLCache(Generic[T]):
             self._store.clear()
 
 
-cache: TTLCache[Any] = TTLCache()
+def _ttl() -> int:
+    import os
+
+    return int(os.getenv("ASHARE_CACHE_TTL", "120"))
+
+
+class EnvTTLCache(TTLCache[Any]):
+    def set(self, key: str, value: Any) -> None:  # type: ignore[override]
+        self.ttl = _ttl()
+        super().set(key, value)
+
+
+cache: EnvTTLCache = EnvTTLCache(ttl_seconds=_ttl())

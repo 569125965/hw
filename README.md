@@ -34,16 +34,17 @@ docs/      产品与技术文档
 截图里的报错是：**不能直接敲 `start.ps1`**（要加 `.\`），且默认 **ExecutionPolicy 禁止跑脚本**。请用 `.cmd`（已 Bypass 策略）：
 
 ```bat
-scripts\start.cmd -Demo
+scripts\start.cmd
 scripts\stop.cmd
 ```
 
-说明见 [scripts/README.md](scripts/README.md)。
+默认对接**真实 A 股数据**（东方财富）。仅调试加 `-Demo`。说明见 [scripts/README.md](scripts/README.md)。
 
 ### Linux / macOS
 
 ```bash
-./scripts/start.sh --demo
+./scripts/start.sh          # 实盘（默认）
+./scripts/start.sh --demo   # 演示数据
 ./scripts/stop.sh
 ```
 

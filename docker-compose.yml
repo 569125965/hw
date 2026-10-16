@@ -2,7 +2,7 @@ services:
   api:
     build: ./backend
     environment:
-      ASHARE_DEMO_MODE: ${ASHARE_DEMO_MODE:-0}
+      ASHARE_DEMO_MODE: ${ASHARE_DEMO_MODE:-0}   # 0=实盘（默认）
       ASHARE_CACHE_TTL: ${ASHARE_CACHE_TTL:-300}
       ASHARE_CORS_ORIGINS: "*"
     volumes:

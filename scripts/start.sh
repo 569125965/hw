@@ -3,10 +3,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# 默认实盘；仅 --demo 强制演示数据
 DEMO=0
 for arg in "$@"; do
   case "$arg" in
     --demo) DEMO=1 ;;
+    --live) DEMO=0 ;;
   esac
 done
 

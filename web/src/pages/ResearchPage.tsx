@@ -62,7 +62,11 @@ export default function ResearchPage() {
         <div className="quote-main">
           <h1>
             {data.name}
-            {data.degraded && <span className="badge">演示/降级数据</span>}
+            {data.degraded ? (
+              <span className="badge">部分降级</span>
+            ) : (
+              <span className="badge">实盘</span>
+            )}
           </h1>
           <div className="meta">
             {q.market}.{q.code} · {data.fundamental.industry}
