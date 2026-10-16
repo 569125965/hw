@@ -5,7 +5,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .run/
-data/
+/data/
 .DS_Store
 web/dist/
 android/.gradle/
