@@ -29,8 +29,21 @@ docs/      产品与技术文档
 
 ## 一键本地启动 / 停止
 
+### Windows（PowerShell / CMD）
+
+截图里的报错是：**不能直接敲 `start.ps1`**（要加 `.\`），且默认 **ExecutionPolicy 禁止跑脚本**。请用 `.cmd`（已 Bypass 策略）：
+
+```bat
+scripts\start.cmd -Demo
+scripts\stop.cmd
+```
+
+说明见 [scripts/README.md](scripts/README.md)。
+
+### Linux / macOS
+
 ```bash
-./scripts/start.sh --demo   # 演示数据，适合无外网行情环境
+./scripts/start.sh --demo
 ./scripts/stop.sh
 ```
 
@@ -46,9 +59,12 @@ docs/      产品与技术文档
 
 详见 [docs/04-DEPLOYMENT.md](docs/04-DEPLOYMENT.md)。
 
-## Android（原生）
+## Android（原生，Android Studio）
 
-见 [android/README.md](android/README.md)。UI 为 Jetpack Compose + 原生图表，不使用 WebView 作为主界面。
+本机有 SDK / Studio：**打开 `android/` 目录 → Sync → Run**。详见 [android/README.md](android/README.md)。
+
+- 模拟器 API：`http://10.0.2.2:8000`
+- 真机：`local.properties` 设 `ashare.api.baseUrl=http://<电脑IP>:8000`
 
 ## 测试
 

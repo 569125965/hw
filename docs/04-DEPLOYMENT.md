@@ -40,6 +40,17 @@
 
 ## 4. 一键本地调试
 
+### Windows
+
+```bat
+scripts\start.cmd -Demo
+scripts\stop.cmd
+```
+
+不要直接运行 `start.ps1`（易被 ExecutionPolicy 拦截）；`.cmd` 已带 `-ExecutionPolicy Bypass`。
+
+### Linux / macOS
+
 ```bash
 ./scripts/start.sh          # 构建并启动 API + Web
 ./scripts/stop.sh           # 停止

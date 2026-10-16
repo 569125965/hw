@@ -1,0 +1,11 @@
+## 复制为 local.properties（勿提交）后按本机修改
+## sdk.dir 一般由 Android Studio 自动生成
+
+# Windows 示例:
+# sdk.dir=C\:\\Users\\Administrator\\AppData\\Local\\Android\\Sdk
+
+# macOS 示例:
+# sdk.dir=/Users/you/Library/Android/sdk
+
+# Debug 时覆盖 API 地址（真机填电脑局域网 IP）
+# ashare.api.baseUrl=http://192.168.1.8:8000

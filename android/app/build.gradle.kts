@@ -4,6 +4,18 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+fun readLocalProp(key: String): String? {
+    val f = rootProject.file("local.properties")
+    if (!f.exists()) return null
+    return f.readLines()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() && !it.startsWith("#") && it.contains("=") }
+        .associate {
+            val i = it.indexOf("=")
+            it.substring(0, i).trim() to it.substring(i + 1).trim()
+        }[key]
+}
+
 android {
     namespace = "com.asharelab.app"
     compileSdk = 35
@@ -15,8 +27,10 @@ android {
         versionCode = 1
         versionName = "1.0.0"
 
-        // Emulator → host machine. Physical device: replace with LAN IP / domain.
-        buildConfigField("String", "API_BASE_URL", "\"http://10.0.2.2:8000\"")
+        // 模拟器默认 10.0.2.2；真机在 local.properties 设置 ashare.api.baseUrl
+        val apiFromLocal = readLocalProp("ashare.api.baseUrl")
+        val apiBase = apiFromLocal ?: "http://10.0.2.2:8000"
+        buildConfigField("String", "API_BASE_URL", "\"$apiBase\"")
     }
 
     buildTypes {
@@ -29,7 +43,7 @@ android {
             )
         }
         debug {
-            buildConfigField("String", "API_BASE_URL", "\"http://10.0.2.2:8000\"")
+            // 继承 defaultConfig；若 local.properties 有 ashare.api.baseUrl 则已覆盖
         }
     }
 
