@@ -1,0 +1,24 @@
+services:
+  api:
+    build: ./backend
+    environment:
+      ASHARE_DEMO_MODE: ${ASHARE_DEMO_MODE:-0}
+      ASHARE_CACHE_TTL: ${ASHARE_CACHE_TTL:-300}
+      ASHARE_CORS_ORIGINS: "*"
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build: ./web
+    ports:
+      - "8080:80"
+    depends_on:
+      api:
+        condition: service_healthy
