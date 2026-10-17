@@ -1,11 +1,22 @@
 const API_BASE = import.meta.env.VITE_API_BASE || "";
 
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`);
-  if (!res.ok) {
-    throw new Error(`请求失败 ${res.status}`);
+async function get<T>(path: string, timeoutMs = 60000): Promise<T> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${API_BASE}${path}`, { signal: ctrl.signal });
+    if (!res.ok) {
+      throw new Error(`请求失败 ${res.status}`);
+    }
+    return (await res.json()) as T;
+  } catch (e) {
+    if ((e as Error).name === "AbortError") {
+      throw new Error("请求超时，请重试");
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
   }
-  return res.json() as Promise<T>;
 }
 
 export type StockHit = { code: string; name: string; market: string };
@@ -49,7 +60,6 @@ export type KlineItem = {
   rsi?: number;
 };
 
-/** 短/中期买卖点；后端可能暂未返回，前端按可选兼容 */
 export type Signal = {
   id: string;
   cycle: "short" | "medium";
@@ -103,9 +113,70 @@ export type Research = {
   degraded?: boolean;
 };
 
+export type ProgressEvent = {
+  step: string;
+  status: "running" | "done" | "error";
+  label: string;
+  preview?: string;
+  error?: string;
+  research?: Research;
+};
+
+export const RESEARCH_STEPS: { id: string; label: string }[] = [
+  { id: "resolve", label: "识别股票" },
+  { id: "quote", label: "拉取盘面报价" },
+  { id: "kline", label: "拉取K线并计算买卖点" },
+  { id: "fundamental", label: "分析产品与行业" },
+  { id: "news", label: "聚合消息面" },
+  { id: "sentiment", label: "评估市场情绪" },
+  { id: "forecast", label: "生成操作思路与预测" },
+  { id: "done", label: "研究完成" },
+];
+
+export async function streamResearch(
+  code: string,
+  onEvent: (ev: ProgressEvent) => void
+): Promise<Research> {
+  const res = await fetch(`${API_BASE}/api/v1/stocks/${encodeURIComponent(code)}/research/stream`);
+  if (!res.ok || !res.body) {
+    throw new Error(`研究流请求失败 ${res.status}`);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let research: Research | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split("\n");
+    buf = lines.pop() || "";
+    for (const line of lines) {
+      const t = line.trim();
+      if (!t) continue;
+      const ev = JSON.parse(t) as ProgressEvent;
+      onEvent(ev);
+      if (ev.step === "done" && ev.status === "done" && ev.research) {
+        research = ev.research;
+      }
+      if (ev.step === "done" && ev.status === "error") {
+        throw new Error(ev.error || "研究失败");
+      }
+    }
+  }
+
+  if (!research) {
+    // fallback: non-stream
+    research = await get<Research>(`/api/v1/stocks/${encodeURIComponent(code)}/research`, 90000);
+  }
+  return research;
+}
+
 export const api = {
   search: (q: string) => get<{ items: StockHit[] }>(`/api/v1/stocks/search?q=${encodeURIComponent(q)}`),
-  research: (code: string) => get<Research>(`/api/v1/stocks/${encodeURIComponent(code)}/research`),
+  research: (code: string) => get<Research>(`/api/v1/stocks/${encodeURIComponent(code)}/research`, 90000),
+  streamResearch,
   health: () => get<{ status: string }>("/api/v1/health"),
 };
 

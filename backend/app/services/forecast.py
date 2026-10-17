@@ -9,22 +9,31 @@ from app.services.market import get_kline, get_quote
 from app.services.sentiment import get_sentiment
 
 
-def get_forecast(code: str) -> dict[str, Any]:
-    quote = get_quote(code)
-    kline = get_kline(code, period="day", limit=180)
-    sentiment = get_sentiment(code)
+def get_forecast(
+    code: str,
+    *,
+    quote: dict[str, Any] | None = None,
+    kline: dict[str, Any] | None = None,
+    sentiment: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    quote = quote or get_quote(code)
+    kline = kline or get_kline(code, period="day", limit=180)
+    sentiment = sentiment or get_sentiment(code, quote=quote, kline=kline)
     df = add_indicators(kline_to_df(kline["items"]))
     price = float(quote["price"])
 
     if df.empty:
         return {
             "code": code,
+            "name": quote.get("name", code),
             "stance": "观望",
             "horizon": "1-4周",
             "summary": "数据不足，建议观望。",
             "actions": ["等待更多有效行情数据"],
             "levels": {},
+            "path": [],
             "scenarios": [],
+            "confidence": 0.3,
             "disclaimer": _disclaimer(),
         }
 
@@ -57,13 +66,11 @@ def get_forecast(code: str) -> dict[str, Any]:
         stance = "观望整理"
         bias = 0.0
 
-    # simple projected path (research aid, not advice)
     horizons = [5, 10, 20]
     path = []
-    p = price
     for h in horizons:
-        expected = p * (1 + bias * (h / 5) + np.clip((score - 50) / 5000, -0.01, 0.01))
-        band = p * vol * np.sqrt(h) * 1.65
+        expected = price * (1 + bias * (h / 5) + np.clip((score - 50) / 5000, -0.01, 0.01))
+        band = price * vol * np.sqrt(h) * 1.65
         path.append(
             {
                 "days": h,
@@ -75,7 +82,6 @@ def get_forecast(code: str) -> dict[str, Any]:
 
     support = round(min(boll_dn, ma20 * 0.98, price * (1 - 2 * vol)), 2)
     resist = round(max(boll_up, ma20 * 1.02, price * (1 + 2 * vol)), 2)
-
     actions = _actions(stance, support, resist, score)
     summary = (
         f"结合盘面、均线结构与情绪分（{score:.0f}），当前思路偏「{stance}」。"
@@ -131,7 +137,7 @@ def _actions(stance: str, support: float, resist: float, score: float) -> list[s
     ]
     if stance in ("逢低关注", "超卖反弹关注"):
         return [
-            f"回踩支撑附近分批试探，无效跌破则停止加仓",
+            "回踩支撑附近分批试探，无效跌破则停止加仓",
             f"情绪分 {score:.0f} 偏暖时优先跟随强势结构",
             *common,
         ]
@@ -150,6 +156,6 @@ def _actions(stance: str, support: float, resist: float, score: float) -> list[s
 
 def _disclaimer() -> str:
     return (
-        "本报告由模型基于公开/演示数据自动生成，仅供研究学习，不构成任何投资建议。"
+        "本报告由模型基于公开数据自动生成，仅供研究学习，不构成任何投资建议。"
         "股市有风险，决策需独立判断并自担风险。"
     )

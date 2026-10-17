@@ -9,15 +9,22 @@ from app.services.market import get_kline, get_quote
 from app.services.news import get_news
 
 
-def get_sentiment(code: str) -> dict[str, Any]:
-    quote = get_quote(code)
-    kline = get_kline(code, period="day", limit=120)
-    news = get_news(code, limit=12)
+def get_sentiment(
+    code: str,
+    *,
+    quote: dict[str, Any] | None = None,
+    kline: dict[str, Any] | None = None,
+    news: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    quote = quote or get_quote(code)
+    kline = kline or get_kline(code, period="day", limit=180)
+    news = news or get_news(code, limit=12)
 
     df = add_indicators(kline_to_df(kline["items"]))
     if df.empty:
         return {
             "code": code,
+            "name": quote.get("name", code),
             "score": 50,
             "label": "中性",
             "factors": [],
@@ -38,7 +45,6 @@ def get_sentiment(code: str) -> dict[str, Any]:
     if pos + neg > 0:
         news_score = 50 + (pos - neg) / (pos + neg) * 30
 
-    # weighted score 0-100
     score = 50.0
     score += np.clip(ret_5 * 100, -12, 12)
     score += np.clip(ret_20 * 60, -10, 10)

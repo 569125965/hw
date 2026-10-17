@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Query
+from fastapi.responses import StreamingResponse
 
 from app.services.forecast import get_forecast
 from app.services.fundamental import get_fundamental
 from app.services.market import get_kline, get_quote, search_stocks
 from app.services.news import get_news
-from app.services.research import build_research
+from app.services.research import STEPS, build_research, events_to_ndjson
 from app.services.sentiment import get_sentiment
 from app.services.signals import detect_signals
 
@@ -78,3 +79,17 @@ def stocks_forecast(code: str) -> dict:
 @router.get("/stocks/{code}/research")
 def stocks_research(code: str) -> dict:
     return build_research(code)
+
+
+@router.get("/stocks/{code}/research/stream")
+def stocks_research_stream(code: str) -> StreamingResponse:
+    """NDJSON 进度流：每行一个步骤事件，最后一步含完整 research。"""
+    return StreamingResponse(
+        events_to_ndjson(code),
+        media_type="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "X-Research-Steps": ",".join(s for s, _ in STEPS),
+        },
+    )

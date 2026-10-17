@@ -1,40 +1,74 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, fmtAmount, fmtMv, Research } from "../api";
+import {
+  fmtAmount,
+  fmtMv,
+  Research,
+  RESEARCH_STEPS,
+  streamResearch,
+} from "../api";
 import KlineChart from "../components/KlineChart";
 
 const TABS = ["盘面", "基本面", "行业", "消息", "情绪", "结论"] as const;
+
+type StepState = {
+  id: string;
+  label: string;
+  status: "pending" | "running" | "done" | "error";
+  preview?: string;
+  error?: string;
+};
 
 export default function ResearchPage() {
   const { code = "" } = useParams();
   const [data, setData] = useState<Research | null>(null);
   const [error, setError] = useState("");
   const [tab, setTab] = useState<(typeof TABS)[number]>("盘面");
+  const [steps, setSteps] = useState<StepState[]>(() =>
+    RESEARCH_STEPS.map((s) => ({ id: s.id, label: s.label, status: "pending" }))
+  );
 
   useEffect(() => {
     let alive = true;
     setData(null);
     setError("");
-    api
-      .research(code)
+    setSteps(RESEARCH_STEPS.map((s) => ({ id: s.id, label: s.label, status: "pending" })));
+
+    streamResearch(code, (ev) => {
+      if (!alive) return;
+      setSteps((prev) =>
+        prev.map((s) => {
+          if (s.id !== ev.step) return s;
+          return {
+            ...s,
+            status: ev.status === "running" ? "running" : ev.status === "error" ? "error" : "done",
+            preview: ev.preview,
+            error: ev.error,
+          };
+        })
+      );
+    })
       .then((r) => {
         if (alive) setData(r);
       })
       .catch((e: Error) => {
         if (alive) setError(e.message || "加载失败");
       });
+
     return () => {
       alive = false;
     };
   }, [code]);
 
   const up = useMemo(() => (data ? data.quote.change >= 0 : true), [data]);
+  const doneCount = steps.filter((s) => s.status === "done").length;
 
-  if (error) {
+  if (error && !data) {
     return (
       <div className="error">
         <div>
           <p>{error}</p>
+          <ProgressPanel steps={steps} doneCount={doneCount} code={code} />
           <Link to="/">返回搜索</Link>
         </div>
       </div>
@@ -42,7 +76,11 @@ export default function ResearchPage() {
   }
 
   if (!data) {
-    return <div className="loading">正在聚合盘面 / 基本面 / 消息 / 情绪…</div>;
+    return (
+      <div className="loading-steps">
+        <ProgressPanel steps={steps} doneCount={doneCount} code={code} />
+      </div>
+    );
   }
 
   const q = data.quote;
@@ -303,6 +341,43 @@ export default function ResearchPage() {
           <p className="disclaimer">{data.forecast.disclaimer}</p>
         </section>
       )}
+    </div>
+  );
+}
+
+function ProgressPanel({
+  steps,
+  doneCount,
+  code,
+}: {
+  steps: StepState[];
+  doneCount: number;
+  code: string;
+}) {
+  const pct = Math.round((doneCount / Math.max(steps.length, 1)) * 100);
+  return (
+    <div className="progress-panel">
+      <h2>正在研究 {decodeURIComponent(code)}</h2>
+      <p className="lead">分步拉取实盘数据并生成结论，请稍候…</p>
+      <div className="progress-bar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+        <i style={{ width: `${pct}%` }} />
+      </div>
+      <ol className="step-list">
+        {steps.map((s) => (
+          <li key={s.id} className={`step ${s.status}`}>
+            <span className="step-mark" aria-hidden>
+              {s.status === "done" ? "✓" : s.status === "running" ? "●" : s.status === "error" ? "!" : "○"}
+            </span>
+            <div>
+              <b>{s.label}</b>
+              {s.preview && <div className="step-preview">{s.preview}</div>}
+              {s.error && <div className="step-error">{s.error}</div>}
+              {s.status === "running" && <div className="step-preview">进行中…</div>}
+              {s.status === "pending" && <div className="step-preview">等待中</div>}
+            </div>
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }
