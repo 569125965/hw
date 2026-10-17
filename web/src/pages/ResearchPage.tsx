@@ -346,10 +346,16 @@ export default function ResearchPage() {
               <strong>{data.social.mood_label}</strong>
               <div className="meta">
                 平台：{(data.social.platforms || []).join("、") || "—"}
-                {data.social.hot_rank != null ? ` · 人气排名 ${data.social.hot_rank}` : ""}
+                {data.social.hot_rank != null
+                  ? ` · 人气榜第 ${data.social.hot_rank}${data.social.market_count ? `/${data.social.market_count}` : ""}`
+                  : ""}
+                {data.social.heat_score != null
+                  ? ` · 热度 ${data.social.heat_score}（${data.social.heat_label || ""}）`
+                  : ""}
                 {data.social.focus_index != null ? ` · 关注指数 ${data.social.focus_index}` : ""}
               </div>
               <div className="meta">
+                标题倾向 {data.social.polarity_score ?? "—"} ·
                 利多 {data.social.mood_breakdown?.positive ?? 0} /
                 中性 {data.social.mood_breakdown?.neutral ?? 0} /
                 利空 {data.social.mood_breakdown?.negative ?? 0}
@@ -411,6 +417,12 @@ export default function ResearchPage() {
             <div className="score-ring">{data.sentiment.score}</div>
             <div>
               <strong>{data.sentiment.label}</strong>
+              <div className="meta">
+                {data.sentiment.hot_rank != null ? `人气榜第 ${data.sentiment.hot_rank}` : ""}
+                {data.sentiment.heat_score != null
+                  ? `${data.sentiment.hot_rank != null ? " · " : ""}热度 ${data.sentiment.heat_score}`
+                  : ""}
+              </div>
               <p className="lead">{data.sentiment.summary}</p>
             </div>
           </div>

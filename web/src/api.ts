@@ -138,6 +138,9 @@ export type Research = {
   social?: {
     mood_score: number;
     mood_label: string;
+    polarity_score?: number;
+    heat_score?: number;
+    heat_label?: string;
     mood_breakdown?: { positive: number; negative: number; neutral: number };
     summary: string;
     platforms?: string[];
@@ -145,6 +148,8 @@ export type Research = {
     guba_count?: number;
     news_count?: number;
     hot_rank?: number | null;
+    rank_change?: number | null;
+    market_count?: number | null;
     focus_index?: number | null;
     community_score?: number | null;
     related?: { code: string; symbol?: string; change_pct?: number; relation?: string }[];
@@ -154,6 +159,8 @@ export type Research = {
     score: number;
     label: string;
     summary: string;
+    heat_score?: number | null;
+    hot_rank?: number | null;
     factors: { name: string; value: number; impact: string }[];
   };
   forecast: {

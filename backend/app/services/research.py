@@ -123,16 +123,39 @@ def iter_research_events(code: str) -> Generator[dict[str, Any], None, None]:
         }
 
     yield {"step": "sentiment", "status": "running", "label": "评估市场情绪"}
-    # blend social mood into technical sentiment after compute
-    sentiment = get_sentiment(resolved, quote=quote, kline=kline, news=news or {"items": []})
+    # 情绪计算已纳入人气热度 / 股吧极性；再与舆情综合分轻度对齐
+    sentiment = get_sentiment(
+        resolved,
+        quote=quote,
+        kline=kline,
+        news=news or {"items": []},
+        social=social,
+    )
     if social.get("mood_score") is not None:
-        blended = round(0.6 * float(sentiment["score"]) + 0.4 * float(social["mood_score"]), 1)
+        blended = round(0.7 * float(sentiment["score"]) + 0.3 * float(social["mood_score"]), 1)
+        heat = social.get("heat_score")
+        rank = social.get("hot_rank")
+        extra = ""
+        if rank:
+            extra = f"人气榜第 {rank}"
+            if heat is not None:
+                extra += f"·热度 {heat}"
+            extra += "。"
+        label = sentiment.get("label") or "中性"
+        if heat is not None and float(heat) >= 85:
+            label = "高热" if blended >= 55 else "高热观望"
+        elif blended >= 65:
+            label = "偏多"
+        elif blended <= 35:
+            label = "偏空"
         sentiment = {
             **sentiment,
             "score": blended,
-            "label": "偏多" if blended >= 65 else "偏空" if blended <= 35 else "中性",
-            "summary": f"{sentiment.get('summary', '')} 叠加舆情后综合 {blended:.0f} 分。",
+            "label": label,
+            "summary": f"{sentiment.get('summary', '')} 叠加舆情后综合 {blended:.0f} 分。{extra}",
             "social_mood": social.get("mood_score"),
+            "heat_score": heat,
+            "hot_rank": rank,
         }
     yield {
         "step": "sentiment",

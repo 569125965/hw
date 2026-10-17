@@ -17,12 +17,22 @@ def build_advice(
     resist = float(levels.get("resistance") or price * 1.05)
     tech_score = float(sentiment.get("score") or 50)
     social_score = float((social or {}).get("mood_score") or tech_score)
+    heat_score = (social or {}).get("heat_score")
     stance = str(forecast.get("stance") or "观望整理")
 
-    # 综合分：技术 55% + 舆情 45%
-    combo = 0.55 * tech_score + 0.45 * social_score
+    polarity = (social or {}).get("polarity_score")
+    # 综合分：技术情绪 50% + 舆情 35% + 人气热度 15%
+    if heat_score is not None:
+        combo = 0.50 * tech_score + 0.35 * social_score + 0.15 * float(heat_score)
+    else:
+        combo = 0.55 * tech_score + 0.45 * social_score
+    # 高热但标题偏争议/利空：压低综合分，避免「人气=买入」
+    if polarity is not None and float(polarity) <= 42 and heat_score is not None and float(heat_score) >= 80:
+        combo = min(combo, 58.0)
 
-    if combo >= 68 and price <= resist * 1.02:
+    if combo >= 68 and price <= resist * 1.02 and not (
+        polarity is not None and float(polarity) <= 42
+    ):
         action = "买入"
         action_code = "buy"
         urgency = "分批建仓"
@@ -32,10 +42,12 @@ def build_advice(
         action_code = "sell"
         urgency = "逢高减仓" if price >= resist * 0.98 else "控制仓位"
         color = "bearish"
-    elif abs(combo - 50) < 8:
+    elif abs(combo - 50) < 8 or (
+        polarity is not None and float(polarity) <= 42 and heat_score is not None and float(heat_score) >= 80
+    ):
         action = "观望"
         action_code = "hold"
-        urgency = "等待方向选择"
+        urgency = "高热争议，等待落地" if (polarity is not None and float(polarity) <= 42) else "等待方向选择"
         color = "neutral"
     elif combo > 55:
         action = "逢低关注"
@@ -60,7 +72,15 @@ def build_advice(
         f"综合得分 {combo:.0f}，操作倾向「{action}」",
     ]
     if social and social.get("hot_rank"):
-        reasons.append(f"东财人气排名约第 {social['hot_rank']}")
+        heat_lbl = social.get("heat_label") or ""
+        reasons.append(
+            f"东财人气榜第 {social['hot_rank']}"
+            + (f"（关注度{heat_lbl}，热度 {social.get('heat_score')}）" if social.get("heat_score") is not None else "")
+        )
+    elif social and social.get("heat_score") is not None:
+        reasons.append(f"人气热度 {social['heat_score']}（{social.get('heat_label', '')}）")
+    if social and social.get("polarity_score") is not None:
+        reasons.append(f"标题倾向 {social['polarity_score']}（热度高也可能偏争议）")
     if social and (social.get("guba_count") or 0) > 0:
         bd = social.get("mood_breakdown") or {}
         reasons.append(

@@ -43,7 +43,7 @@ else
 fi
 
 if command -v python3 >/dev/null 2>&1; then
-  DEF="$("$python3" -c 'import sys; print("%d.%d"%sys.version_info[:2])' 2>/dev/null || python3 -c 'import sys; print("%d.%d"%sys.version_info[:2])')"
+  DEF="$(python3 -c 'import sys; print("%d.%d"%sys.version_info[:2])' 2>/dev/null || echo "unknown")"
   DEF_MINOR="${DEF#*.}"
   if [[ "${DEF%%.*}" == "3" && "$DEF_MINOR" -gt 13 ]]; then
     echo "[warn] 默认 python3 是 $DEF，不要用它建 venv"
