@@ -71,6 +71,39 @@ export type Signal = {
   label: string;
 };
 
+export type SocialPost = {
+  id: string;
+  platform: string;
+  platform_label: string;
+  title: string;
+  summary: string;
+  author?: string;
+  published_at?: string;
+  click?: number;
+  comment?: number;
+  sentiment: string;
+  url?: string;
+};
+
+export type Advice = {
+  action: string;
+  action_code: string;
+  urgency: string;
+  color: string;
+  combo_score: number;
+  tech_score: number;
+  social_score: number;
+  price: number;
+  buy_zone: number[];
+  sell_zone: number[];
+  stop_loss: number;
+  take_profit: number;
+  horizon: string;
+  reasons: string[];
+  checklist: string[];
+  disclaimer: string;
+};
+
 export type Research = {
   code: string;
   name: string;
@@ -81,7 +114,7 @@ export type Research = {
     concepts: string[];
     products: { name: string; share: number; desc: string }[];
     business_summary: string;
-    peers: { code: string; name: string; change_pct?: number; price?: number }[];
+    peers: { code: string; name: string; change_pct?: number; price?: number; relation?: string }[];
   };
   news: {
     items: {
@@ -92,6 +125,21 @@ export type Research = {
       summary: string;
       sentiment: string;
     }[];
+  };
+  social?: {
+    mood_score: number;
+    mood_label: string;
+    mood_breakdown?: { positive: number; negative: number; neutral: number };
+    summary: string;
+    platforms?: string[];
+    posts?: SocialPost[];
+    guba_count?: number;
+    news_count?: number;
+    hot_rank?: number | null;
+    focus_index?: number | null;
+    community_score?: number | null;
+    related?: { code: string; symbol?: string; change_pct?: number; relation?: string }[];
+    keywords?: { name: string; heat: number }[];
   };
   sentiment: {
     score: number;
@@ -110,6 +158,7 @@ export type Research = {
     confidence: number;
     disclaimer: string;
   };
+  advice?: Advice;
   degraded?: boolean;
 };
 
@@ -127,9 +176,11 @@ export const RESEARCH_STEPS: { id: string; label: string }[] = [
   { id: "quote", label: "拉取盘面报价" },
   { id: "kline", label: "拉取K线并计算买卖点" },
   { id: "fundamental", label: "分析产品与行业" },
-  { id: "news", label: "聚合消息面" },
+  { id: "news", label: "聚合官方消息" },
+  { id: "social", label: "抓取股吧/新闻舆情与关联" },
   { id: "sentiment", label: "评估市场情绪" },
-  { id: "forecast", label: "生成操作思路与预测" },
+  { id: "forecast", label: "生成走势研判" },
+  { id: "advice", label: "给出买卖操作建议" },
   { id: "done", label: "研究完成" },
 ];
 

@@ -5,20 +5,24 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Generator
 
 from app.core.cache import cache
+from app.services.advice import build_advice
 from app.services.forecast import get_forecast
 from app.services.fundamental import get_fundamental
 from app.services.market import get_kline, get_quote
 from app.services.news import get_news
 from app.services.sentiment import get_sentiment
+from app.services.social import get_social
 
 STEPS = [
     ("resolve", "识别股票"),
     ("quote", "拉取盘面报价"),
     ("kline", "拉取K线并计算买卖点"),
     ("fundamental", "分析产品与行业"),
-    ("news", "聚合消息面"),
+    ("news", "聚合官方消息"),
+    ("social", "抓取股吧/新闻舆情与关联"),
     ("sentiment", "评估市场情绪"),
-    ("forecast", "生成操作思路与预测"),
+    ("forecast", "生成走势研判"),
+    ("advice", "给出买卖操作建议"),
     ("done", "研究完成"),
 ]
 
@@ -40,27 +44,25 @@ def build_research(code: str) -> dict[str, Any]:
 
 
 def iter_research_events(code: str) -> Generator[dict[str, Any], None, None]:
-    """Yield progress events; final event carries full research payload."""
     yield {"step": "resolve", "status": "running", "label": "识别股票"}
 
-    # parallel fetch independent slices
-    yield {"step": "quote", "status": "running", "label": "拉取盘面报价"}
-    yield {"step": "kline", "status": "running", "label": "拉取K线并计算买卖点"}
-    yield {"step": "fundamental", "status": "running", "label": "分析产品与行业"}
-    yield {"step": "news", "status": "running", "label": "聚合消息面"}
+    for step in ("quote", "kline", "fundamental", "news", "social"):
+        yield {"step": step, "status": "running", "label": dict(STEPS)[step]}
 
     quote: dict[str, Any] = {}
     kline: dict[str, Any] = {}
     fundamental: dict[str, Any] = {}
     news: dict[str, Any] = {}
+    social: dict[str, Any] = {}
     errors: dict[str, str] = {}
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=5) as pool:
         futs = {
             pool.submit(get_quote, code): "quote",
             pool.submit(get_kline, code, "day", 180): "kline",
             pool.submit(get_fundamental, code): "fundamental",
             pool.submit(get_news, code): "news",
+            pool.submit(get_social, code): "social",
         }
         for fut in as_completed(futs):
             name = futs[fut]
@@ -72,8 +74,10 @@ def iter_research_events(code: str) -> Generator[dict[str, Any], None, None]:
                     kline = data
                 elif name == "fundamental":
                     fundamental = data
-                else:
+                elif name == "news":
                     news = data
+                else:
+                    social = data
                 yield {
                     "step": name,
                     "status": "done",
@@ -106,8 +110,30 @@ def iter_research_events(code: str) -> Generator[dict[str, Any], None, None]:
         "preview": f"{quote.get('name')} ({resolved})",
     }
 
+    if not social:
+        social = {
+            "code": resolved,
+            "posts": [],
+            "mood_score": 50,
+            "mood_label": "中性",
+            "related": [],
+            "keywords": [],
+            "summary": "舆情暂不可用",
+            "degraded": True,
+        }
+
     yield {"step": "sentiment", "status": "running", "label": "评估市场情绪"}
+    # blend social mood into technical sentiment after compute
     sentiment = get_sentiment(resolved, quote=quote, kline=kline, news=news or {"items": []})
+    if social.get("mood_score") is not None:
+        blended = round(0.6 * float(sentiment["score"]) + 0.4 * float(social["mood_score"]), 1)
+        sentiment = {
+            **sentiment,
+            "score": blended,
+            "label": "偏多" if blended >= 65 else "偏空" if blended <= 35 else "中性",
+            "summary": f"{sentiment.get('summary', '')} 叠加舆情后综合 {blended:.0f} 分。",
+            "social_mood": social.get("mood_score"),
+        }
     yield {
         "step": "sentiment",
         "status": "done",
@@ -115,13 +141,22 @@ def iter_research_events(code: str) -> Generator[dict[str, Any], None, None]:
         "preview": f"{sentiment.get('label')} {sentiment.get('score')}",
     }
 
-    yield {"step": "forecast", "status": "running", "label": "生成操作思路与预测"}
+    yield {"step": "forecast", "status": "running", "label": "生成走势研判"}
     forecast = get_forecast(resolved, quote=quote, kline=kline, sentiment=sentiment)
     yield {
         "step": "forecast",
         "status": "done",
-        "label": "生成操作思路与预测",
+        "label": "生成走势研判",
         "preview": forecast.get("stance"),
+    }
+
+    yield {"step": "advice", "status": "running", "label": "给出买卖操作建议"}
+    advice = build_advice(quote=quote, forecast=forecast, sentiment=sentiment, social=social)
+    yield {
+        "step": "advice",
+        "status": "done",
+        "label": "给出买卖操作建议",
+        "preview": f"{advice.get('action')} · {advice.get('urgency')}",
     }
 
     if not fundamental:
@@ -138,6 +173,23 @@ def iter_research_events(code: str) -> Generator[dict[str, Any], None, None]:
     if not news:
         news = {"code": resolved, "name": quote.get("name", resolved), "items": [], "degraded": True}
 
+    # enrich peers with social related
+    peers = list(fundamental.get("peers") or [])
+    seen = {p.get("code") for p in peers}
+    for r in social.get("related") or []:
+        if r.get("code") in seen:
+            continue
+        peers.append(
+            {
+                "code": r["code"],
+                "name": r.get("symbol") or r["code"],
+                "change_pct": r.get("change_pct"),
+                "relation": r.get("relation"),
+            }
+        )
+        seen.add(r["code"])
+    fundamental = {**fundamental, "peers": peers}
+
     payload = {
         "code": resolved,
         "name": quote.get("name", resolved),
@@ -145,14 +197,17 @@ def iter_research_events(code: str) -> Generator[dict[str, Any], None, None]:
         "kline": kline,
         "fundamental": fundamental,
         "news": news,
+        "social": social,
         "sentiment": sentiment,
         "forecast": forecast,
+        "advice": advice,
         "degraded": any(
             [
                 quote.get("degraded"),
                 kline.get("degraded"),
                 fundamental.get("degraded"),
                 news.get("degraded"),
+                social.get("degraded"),
                 sentiment.get("degraded"),
                 forecast.get("degraded"),
             ]
@@ -176,7 +231,12 @@ def _preview(name: str, data: dict[str, Any]) -> str:
     if name == "fundamental":
         return f"{data.get('industry')} · {len(data.get('concepts') or [])} 个概念"
     if name == "news":
-        return f"{len(data.get('items') or [])} 条消息"
+        return f"{len(data.get('items') or [])} 条官方/资讯"
+    if name == "social":
+        return (
+            f"舆情 {data.get('mood_score')}（{data.get('mood_label')}）· "
+            f"股吧 {data.get('guba_count', 0)} · 关联 {len(data.get('related') or [])}"
+        )
     return "ok"
 
 

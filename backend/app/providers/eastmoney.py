@@ -95,7 +95,7 @@ def get_quote(code: str) -> dict[str, Any]:
     pre = num("f18")
     return {
         "code": code,
-        "name": str(d.get("f14") or code),
+        "name": str(d.get("f14") or code).replace(" ", "").replace("\u3000", ""),
         "market": market_of(code),
         "price": price,
         "open": num("f17"),

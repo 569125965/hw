@@ -9,7 +9,7 @@ import {
 } from "../api";
 import KlineChart from "../components/KlineChart";
 
-const TABS = ["盘面", "基本面", "行业", "消息", "情绪", "结论"] as const;
+const TABS = ["建议", "盘面", "基本面", "行业", "消息", "舆情", "情绪", "结论"] as const;
 
 type StepState = {
   id: string;
@@ -23,7 +23,7 @@ export default function ResearchPage() {
   const { code = "" } = useParams();
   const [data, setData] = useState<Research | null>(null);
   const [error, setError] = useState("");
-  const [tab, setTab] = useState<(typeof TABS)[number]>("盘面");
+  const [tab, setTab] = useState<(typeof TABS)[number]>("建议");
   const [steps, setSteps] = useState<StepState[]>(() =>
     RESEARCH_STEPS.map((s) => ({ id: s.id, label: s.label, status: "pending" }))
   );
@@ -179,13 +179,71 @@ export default function ResearchPage() {
         <span className="signal-legend-hint">短期 / 中期定义详见文档</span>
       </div>
 
-      <nav className="tabs">
+      <nav className="tabs" role="tablist">
         {TABS.map((t) => (
-          <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)} type="button">
+          <button
+            key={t}
+            type="button"
+            role="tab"
+            aria-selected={tab === t}
+            className={tab === t ? "active" : ""}
+            onClick={() => setTab(t)}
+            style={{ minHeight: 44, minWidth: 64 }}
+          >
             {t}
           </button>
         ))}
       </nav>
+
+      {tab === "建议" && data.advice && (
+        <section className="panel">
+          <h2>当前买卖操作建议</h2>
+          <div className={`advice-banner ${data.advice.color}`}>
+            <strong>{data.advice.action}</strong>
+            <span>{data.advice.urgency}</span>
+            <span>综合 {data.advice.combo_score}</span>
+            <span>周期 {data.advice.horizon}</span>
+          </div>
+          <div className="levels">
+            <div>
+              <span>买入参考区</span>
+              <b>
+                {data.advice.buy_zone[0]} - {data.advice.buy_zone[1]}
+              </b>
+            </div>
+            <div>
+              <span>卖出参考区</span>
+              <b>
+                {data.advice.sell_zone[0]} - {data.advice.sell_zone[1]}
+              </b>
+            </div>
+            <div>
+              <span>止损</span>
+              <b>{data.advice.stop_loss}</b>
+            </div>
+            <div>
+              <span>止盈参考</span>
+              <b>{data.advice.take_profit}</b>
+            </div>
+          </div>
+          <p className="lead">
+            技术 {data.advice.tech_score} · 舆情 {data.advice.social_score} · 现价 {data.advice.price}
+          </p>
+          <h3>依据</h3>
+          <ul className="action-list">
+            {data.advice.reasons.map((a) => (
+              <li key={a}>• {a}</li>
+            ))}
+          </ul>
+          <h3>执行清单</h3>
+          <ul className="action-list">
+            {data.advice.checklist.map((a) => (
+              <li key={a}>• {a}</li>
+            ))}
+          </ul>
+          <p className="disclaimer">{data.advice.disclaimer}</p>
+        </section>
+      )}
 
       {tab === "盘面" && (
         <section className="panel">
@@ -272,6 +330,74 @@ export default function ResearchPage() {
                   {n.source} · {n.published_at}
                 </div>
                 <p>{n.summary}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {tab === "舆情" && data.social && (
+        <section className="panel">
+          <h2>股吧 / 新闻舆情</h2>
+          <p className="lead">{data.social.summary}</p>
+          <div className="sentiment-score">
+            <div className="score-ring">{data.social.mood_score}</div>
+            <div>
+              <strong>{data.social.mood_label}</strong>
+              <div className="meta">
+                平台：{(data.social.platforms || []).join("、") || "—"}
+                {data.social.hot_rank != null ? ` · 人气排名 ${data.social.hot_rank}` : ""}
+                {data.social.focus_index != null ? ` · 关注指数 ${data.social.focus_index}` : ""}
+              </div>
+              <div className="meta">
+                利多 {data.social.mood_breakdown?.positive ?? 0} /
+                中性 {data.social.mood_breakdown?.neutral ?? 0} /
+                利空 {data.social.mood_breakdown?.negative ?? 0}
+              </div>
+            </div>
+          </div>
+          {!!data.social.keywords?.length && (
+            <div className="tag-row">
+              {data.social.keywords.map((k) => (
+                <span className="tag" key={k.name}>
+                  {k.name} · {k.heat}
+                </span>
+              ))}
+            </div>
+          )}
+          {!!data.social.related?.length && (
+            <>
+              <h3>关联热股</h3>
+              <ul className="peer-list">
+                {data.social.related.map((p) => (
+                  <li key={p.code}>
+                    <Link to={`/research/${p.code}`}>
+                      <b>
+                        {p.symbol || p.code}（{p.relation || "关联"}）
+                      </b>
+                    </Link>
+                    <div className={(p.change_pct ?? 0) >= 0 ? "up" : "down"}>
+                      {(p.change_pct ?? 0) >= 0 ? "▲" : "▼"} {(p.change_pct ?? 0).toFixed(2)}%
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          <h3>帖子 / 资讯</h3>
+          <ul className="news-list">
+            {(data.social.posts || []).slice(0, 25).map((n) => (
+              <li key={n.id}>
+                <b className={n.sentiment === "positive" ? "up" : n.sentiment === "negative" ? "down" : ""}>
+                  {n.title}
+                </b>
+                <div className="src">
+                  {n.platform_label}
+                  {n.author ? ` · ${n.author}` : ""}
+                  {n.published_at ? ` · ${n.published_at}` : ""}
+                  {n.comment ? ` · 评 ${n.comment}` : ""}
+                  {n.click ? ` · 阅 ${n.click}` : ""}
+                </div>
               </li>
             ))}
           </ul>

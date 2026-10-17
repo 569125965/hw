@@ -10,6 +10,7 @@ from app.services.news import get_news
 from app.services.research import STEPS, build_research, events_to_ndjson
 from app.services.sentiment import get_sentiment
 from app.services.signals import detect_signals
+from app.services.social import get_social
 
 router = APIRouter()
 
@@ -64,6 +65,12 @@ def stocks_fundamental(code: str) -> dict:
 @router.get("/stocks/{code}/news")
 def stocks_news(code: str, limit: int = Query(20, ge=1, le=50)) -> dict:
     return get_news(code, limit=limit)
+
+
+@router.get("/stocks/{code}/social")
+def stocks_social(code: str) -> dict:
+    """股吧/新闻舆情、关联热股、关注热度。"""
+    return get_social(code)
 
 
 @router.get("/stocks/{code}/sentiment")

@@ -95,12 +95,16 @@ function formatTooltip(params: unknown): string {
       }
       continue;
     }
-    if (name === "K线" && Array.isArray(p.data)) {
-      const ohlc = p.data as number[];
-      const fmt = (n: number) => (typeof n === "number" ? n.toFixed(2) : String(n));
-      lines.push(
-        `${p.marker ?? ""}开 ${fmt(ohlc[0])}　收 ${fmt(ohlc[1])}　低 ${fmt(ohlc[2])}　高 ${fmt(ohlc[3])}`,
-      );
+    if (name === "K线") {
+      // ECharts candlestick tooltip 常见为 [idx, open, close, low, high]
+      const raw = Array.isArray(p.data) ? (p.data as number[]) : [];
+      const ohlc = raw.length >= 5 ? raw.slice(1, 5) : raw.length >= 4 ? raw.slice(0, 4) : [];
+      if (ohlc.length >= 4) {
+        const fmt = (n: number) => (typeof n === "number" ? n.toFixed(2) : String(n));
+        lines.push(
+          `${p.marker ?? ""}开 ${fmt(ohlc[0])}　收 ${fmt(ohlc[1])}　低 ${fmt(ohlc[2])}　高 ${fmt(ohlc[3])}`,
+        );
+      }
       continue;
     }
     if (p.value == null || (Array.isArray(p.value) && p.value[1] == null)) continue;
