@@ -24,13 +24,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start.ps1
 
 前置：已安装 Python 3.11+、Node.js 18+，并在 PATH 中。
 
-## Linux / macOS
+## Linux / macOS（含 /Users/rouser/Documents/dev/hw）
 
 ```bash
-./scripts/start.sh          # 实盘
-./scripts/start.sh --demo   # 演示
-./scripts/stop.sh
+cd /Users/rouser/Documents/dev/hw   # 换成你的实际路径
+chmod +x scripts/*.sh
+./scripts/doctor.sh                 # 先检查 Python/Node/端口
+./scripts/start.sh                  # 实盘启动
+./scripts/stop.sh                   # 停止
 ```
+
+若 `Permission denied`：`chmod +x scripts/*.sh`  
+若缺依赖（macOS）：`brew install python@3.12 node`  
+若端口占用：先 `./scripts/stop.sh` 再启动。  
+看失败原因：`tail -50 .run/api.log` / `tail -50 .run/web.log`
 
 ## 启动后
 
