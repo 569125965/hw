@@ -13,10 +13,40 @@ done
 
 mkdir -p "$ROOT/data" "$ROOT/.run"
 
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "[err] 未找到 python3。macOS: brew install python@3.12" >&2
+# 优先 3.12/3.13/3.11 —— 不要用 3.14（pydantic-core / PyO3 尚不支持）
+pick_python() {
+  local c
+  for c in python3.12 python3.13 python3.11 python3; do
+    if command -v "$c" >/dev/null 2>&1; then
+      local ver
+      ver="$("$c" -c 'import sys; print("%d.%d"%sys.version_info[:2])' 2>/dev/null || true)"
+      if [[ -z "$ver" ]]; then
+        continue
+      fi
+      local major minor
+      major="${ver%%.*}"
+      minor="${ver#*.}"
+      if [[ "$major" -eq 3 && "$minor" -ge 10 && "$minor" -le 13 ]]; then
+        echo "$c"
+        return 0
+      fi
+    fi
+  done
+  return 1
+}
+
+if ! PY_CMD="$(pick_python)"; then
+  echo "[err] 需要 Python 3.10–3.13（检测到系统可能是 3.14+，会导致 pydantic-core 编译失败）" >&2
+  echo "[err] macOS 请执行:" >&2
+  echo "  brew install python@3.12" >&2
+  echo "  rm -rf backend/.venv" >&2
+  echo "  ./scripts/start.sh" >&2
   exit 1
 fi
+
+PY_VER="$("$PY_CMD" -c 'import sys; print("%d.%d"%sys.version_info[:2])')"
+echo "[start] 使用 $PY_CMD (Python $PY_VER)"
+
 if ! command -v npm >/dev/null 2>&1; then
   echo "[err] 未找到 npm。macOS: brew install node" >&2
   exit 1
@@ -25,24 +55,31 @@ fi
 "$ROOT/scripts/stop.sh" >/dev/null 2>&1 || true
 
 VENV_DIR="$ROOT/backend/.venv"
-if [[ "$(uname -s)" == "Darwin" ]]; then
-  VENV_PY="$VENV_DIR/bin/python"
-  VENV_PIP="$VENV_DIR/bin/pip"
-else
-  VENV_PY="$VENV_DIR/bin/python"
-  VENV_PIP="$VENV_DIR/bin/pip"
+VENV_PY="$VENV_DIR/bin/python"
+
+# 若已有 venv 但版本不对（例如 3.14），删掉重建
+if [[ -x "$VENV_PY" ]]; then
+  CUR="$("$VENV_PY" -c 'import sys; print("%d.%d"%sys.version_info[:2])' 2>/dev/null || echo "0.0")"
+  CUR_MINOR="${CUR#*.}"
+  if [[ "${CUR%%.*}" != "3" || "$CUR_MINOR" -gt 13 || "$CUR_MINOR" -lt 10 ]]; then
+    echo "[start] 现有 venv 为 Python $CUR，不兼容，正在重建..."
+    rm -rf "$VENV_DIR"
+  fi
 fi
 
 if [[ ! -x "$VENV_PY" ]]; then
-  echo "[start] 创建 Python 虚拟环境..."
-  python3 -m venv "$VENV_DIR"
+  echo "[start] 创建虚拟环境 ($PY_CMD)..."
+  "$PY_CMD" -m venv "$VENV_DIR"
 fi
 
-# venv 在但依赖不完整时补装（本地常见问题）
-if ! "$VENV_PY" -c "import fastapi, uvicorn, pandas, httpx" >/dev/null 2>&1; then
-  echo "[start] 安装后端依赖（首次或依赖缺失）..."
-  "$VENV_PY" -m pip install -U pip
-  "$VENV_PY" -m pip install -r "$ROOT/backend/requirements.txt"
+if ! "$VENV_PY" -c "import fastapi, uvicorn, pandas, httpx, pydantic" >/dev/null 2>&1; then
+  echo "[start] 安装后端依赖..."
+  "$VENV_PY" -m pip install -U pip setuptools wheel
+  if ! "$VENV_PY" -m pip install -r "$ROOT/backend/requirements.txt"; then
+    echo "[err] 依赖安装失败。若仍提到 pydantic-core / Python 3.14，请改用 3.12：" >&2
+    echo "  brew install python@3.12 && rm -rf backend/.venv && ./scripts/start.sh" >&2
+    exit 1
+  fi
 fi
 
 if [[ ! -d "$ROOT/web/node_modules/vite" ]]; then
@@ -55,7 +92,6 @@ export ASHARE_CACHE_TTL="${ASHARE_CACHE_TTL:-120}"
 export PYTHONUNBUFFERED=1
 
 echo "[start] API on :8000 (ASHARE_DEMO_MODE=$ASHARE_DEMO_MODE)"
-# 用绝对模块路径，避免 cwd 问题
 nohup "$VENV_PY" -m uvicorn app.main:app \
   --app-dir "$ROOT/backend" \
   --host 127.0.0.1 --port 8000 \
@@ -73,7 +109,6 @@ for i in {1..90}; do
     api_ok=1
     break
   fi
-  # 若进程已死，提前失败
   if [[ -f "$ROOT/.run/api.pid" ]]; then
     pid="$(cat "$ROOT/.run/api.pid" 2>/dev/null || true)"
     if [[ -n "${pid:-}" ]] && ! kill -0 "$pid" 2>/dev/null; then
@@ -84,8 +119,7 @@ for i in {1..90}; do
 done
 
 if [[ "$api_ok" -ne 1 ]]; then
-  echo "[err] 后端 API 未启动成功（这就是页面提示「无法连接研究服务」的原因）" >&2
-  echo "[err] 请查看日志: $ROOT/.run/api.log" >&2
+  echo "[err] 后端 API 未启动成功，日志:" >&2
   tail -n 50 "$ROOT/.run/api.log" >&2 || true
   exit 1
 fi
@@ -105,14 +139,12 @@ if [[ "$web_ok" -ne 1 ]]; then
   exit 1
 fi
 
-# 自检：前端代理路径
 if curl -fsS "http://127.0.0.1:5173/api/v1/health" >/dev/null 2>&1; then
   echo "[ok] 前端代理 /api -> 后端 正常"
 else
-  echo "[warn] 直接 API 正常，但 Vite 代理 /api 暂不可用；请硬刷新浏览器或重启 start.sh" >&2
+  echo "[warn] API 正常，但 Vite 代理暂不可用；请硬刷新浏览器" >&2
 fi
 
 echo "[ok] API  http://127.0.0.1:8000/docs"
 echo "[ok] Web  http://127.0.0.1:5173"
-echo "若浏览器仍报未连接：先 ./scripts/stop.sh 再 ./scripts/start.sh，并用无痕窗口打开 Web"
 echo "Logs: $ROOT/.run/api.log , $ROOT/.run/web.log"

@@ -21,11 +21,33 @@ need node
 need npm
 need curl
 
-if python3 -c 'import sys; raise SystemExit(0 if sys.version_info>=(3,10) else 1)'; then
-  echo "[ok] Python >= 3.10"
+# Python 版本窗
+BEST=""
+for c in python3.12 python3.13 python3.11 python3; do
+  if command -v "$c" >/dev/null 2>&1; then
+    ver="$("$c" -c 'import sys; print("%d.%d"%sys.version_info[:2])' 2>/dev/null || true)"
+    minor="${ver#*.}"
+    if [[ "${ver%%.*}" == "3" && "$minor" -ge 10 && "$minor" -le 13 ]]; then
+      BEST="$c ($ver)"
+      break
+    fi
+  fi
+done
+
+if [[ -n "$BEST" ]]; then
+  echo "[ok] 可用后端 Python: $BEST"
 else
-  echo "[miss] need Python 3.10+"
+  echo "[miss] 未找到 Python 3.10–3.13（3.14 会导致 pydantic-core 编译失败）"
+  echo "       macOS: brew install python@3.12"
   ok=0
+fi
+
+if command -v python3 >/dev/null 2>&1; then
+  DEF="$("$python3" -c 'import sys; print("%d.%d"%sys.version_info[:2])' 2>/dev/null || python3 -c 'import sys; print("%d.%d"%sys.version_info[:2])')"
+  DEF_MINOR="${DEF#*.}"
+  if [[ "${DEF%%.*}" == "3" && "$DEF_MINOR" -gt 13 ]]; then
+    echo "[warn] 默认 python3 是 $DEF，不要用它建 venv"
+  fi
 fi
 
 NODE_MAJOR=$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0)
@@ -52,5 +74,7 @@ if [[ "$ok" -eq 1 ]]; then
   echo "  cd \"$ROOT\" && ./scripts/start.sh"
   exit 0
 fi
-echo "Install missing deps first. macOS: brew install python@3.12 node"
+echo "Install missing deps first."
+echo "  brew install python@3.12 node"
+echo "  rm -rf backend/.venv && ./scripts/start.sh"
 exit 1

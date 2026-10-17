@@ -39,6 +39,19 @@ chmod +x scripts/*.sh
 若端口占用：先 `./scripts/stop.sh` 再启动。  
 看失败原因：`tail -50 .run/api.log` / `tail -50 .run/web.log`
 
+### pydantic-core / Python 3.14 编译失败
+
+系统默认 Python 3.14 时，`pydantic-core` 的 Rust/PyO3 还不支持。请改用 3.12：
+
+```bash
+brew install python@3.12
+cd /Users/rouser/Documents/dev/hw
+rm -rf backend/.venv
+./scripts/start.sh
+```
+
+`start.sh` 会自动挑选 3.10–3.13，并拒绝不兼容的 venv。
+
 ### 页面提示「无法连接研究服务」
 
 说明 **只开了前端，后端 :8000 没起来**（或旧进程残留）。不要只跑 `npm run dev`，请：
