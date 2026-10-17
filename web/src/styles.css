@@ -200,6 +200,26 @@ input {
   font-size: 0.9rem;
 }
 
+.hint.error-text {
+  color: #ef9a9a;
+}
+
+.backend-help {
+  margin-top: 14px;
+}
+
+.cmd-box {
+  margin: 10px 0 14px;
+  padding: 12px 14px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--line);
+  color: #d7e6ec;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
 .page {
   max-width: 1200px;
   margin: 0 auto;

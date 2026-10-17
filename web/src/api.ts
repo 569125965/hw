@@ -1,22 +1,31 @@
-const API_BASE = import.meta.env.VITE_API_BASE || "";
+const API_BASE = (import.meta.env.VITE_API_BASE || "").replace(/\/$/, "");
+
+/** 相对路径走 Vite 代理；失败再直连本机后端 */
+const API_FALLBACKS = [API_BASE, "http://127.0.0.1:8000"];
 
 async function get<T>(path: string, timeoutMs = 60000): Promise<T> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const res = await fetch(`${API_BASE}${path}`, { signal: ctrl.signal });
-    if (!res.ok) {
-      throw new Error(`请求失败 ${res.status}`);
+  const errors: string[] = [];
+  for (const base of API_FALLBACKS) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    const url = `${base}${path}`;
+    try {
+      const res = await fetch(url, { signal: ctrl.signal });
+      if (!res.ok) {
+        errors.push(`${url} -> HTTP ${res.status}`);
+        continue;
+      }
+      return (await res.json()) as T;
+    } catch (e) {
+      const msg = (e as Error).name === "AbortError" ? "超时" : (e as Error).message || "网络错误";
+      errors.push(`${url} -> ${msg}`);
+    } finally {
+      clearTimeout(timer);
     }
-    return (await res.json()) as T;
-  } catch (e) {
-    if ((e as Error).name === "AbortError") {
-      throw new Error("请求超时，请重试");
-    }
-    throw e;
-  } finally {
-    clearTimeout(timer);
   }
+  throw new Error(
+    `无法连接研究服务（后端 :8000）。请在项目根目录执行 ./scripts/start.sh。详情: ${errors.join(" | ")}`
+  );
 }
 
 export type StockHit = { code: string; name: string; market: string };
@@ -184,15 +193,26 @@ export const RESEARCH_STEPS: { id: string; label: string }[] = [
   { id: "done", label: "研究完成" },
 ];
 
+async function openStream(path: string): Promise<Response> {
+  const errors: string[] = [];
+  for (const base of API_FALLBACKS) {
+    try {
+      const res = await fetch(`${base}${path}`);
+      if (res.ok && res.body) return res;
+      errors.push(`${base}${path} -> HTTP ${res.status}`);
+    } catch (e) {
+      errors.push(`${base}${path} -> ${(e as Error).message}`);
+    }
+  }
+  throw new Error(`无法连接研究服务。请先 ./scripts/start.sh。${errors.join(" | ")}`);
+}
+
 export async function streamResearch(
   code: string,
   onEvent: (ev: ProgressEvent) => void
 ): Promise<Research> {
-  const res = await fetch(`${API_BASE}/api/v1/stocks/${encodeURIComponent(code)}/research/stream`);
-  if (!res.ok || !res.body) {
-    throw new Error(`研究流请求失败 ${res.status}`);
-  }
-  const reader = res.body.getReader();
+  const res = await openStream(`/api/v1/stocks/${encodeURIComponent(code)}/research/stream`);
+  const reader = res.body!.getReader();
   const decoder = new TextDecoder();
   let buf = "";
   let research: Research | null = null;
@@ -218,7 +238,6 @@ export async function streamResearch(
   }
 
   if (!research) {
-    // fallback: non-stream
     research = await get<Research>(`/api/v1/stocks/${encodeURIComponent(code)}/research`, 90000);
   }
   return research;
@@ -228,7 +247,7 @@ export const api = {
   search: (q: string) => get<{ items: StockHit[] }>(`/api/v1/stocks/search?q=${encodeURIComponent(q)}`),
   research: (code: string) => get<Research>(`/api/v1/stocks/${encodeURIComponent(code)}/research`, 90000),
   streamResearch,
-  health: () => get<{ status: string }>("/api/v1/health"),
+  health: () => get<{ status: string }>("/api/v1/health", 8000),
 };
 
 export function fmtAmount(n: number): string {

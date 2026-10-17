@@ -39,6 +39,19 @@ chmod +x scripts/*.sh
 若端口占用：先 `./scripts/stop.sh` 再启动。  
 看失败原因：`tail -50 .run/api.log` / `tail -50 .run/web.log`
 
+### 页面提示「无法连接研究服务」
+
+说明 **只开了前端，后端 :8000 没起来**（或旧进程残留）。不要只跑 `npm run dev`，请：
+
+```bash
+cd /Users/rouser/Documents/dev/hw
+./scripts/stop.sh
+./scripts/start.sh
+curl http://127.0.0.1:8000/api/v1/health   # 应返回 {"status":"ok"...}
+```
+
+终端必须出现 `[ok] API` 和 `[ok] Web`，再刷新浏览器。
+
 ## 启动后
 
 - Web: http://127.0.0.1:5173
