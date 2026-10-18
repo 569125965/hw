@@ -13,6 +13,7 @@ from app.services.llm import deep_analyze, llm_status
 from app.services.macro import get_macro
 from app.services.market import get_kline, get_quote
 from app.services.news import get_news
+from app.services.scores import build_chart_overlays, build_scorecard
 from app.services.sentiment import get_sentiment
 from app.services.social import get_social
 
@@ -253,6 +254,16 @@ def iter_research_events(code: str) -> Generator[dict[str, Any], None, None]:
         macro=macro,
         llm=llm,
     )
+    scorecard = build_scorecard(
+        quote=quote,
+        sentiment=sentiment,
+        social=social,
+        capital=capital,
+        macro=macro,
+        forecast=forecast,
+        advice=advice,
+    )
+    chart_overlays = build_chart_overlays(capital, quote)
     yield {
         "step": "advice",
         "status": "done",
@@ -305,6 +316,8 @@ def iter_research_events(code: str) -> Generator[dict[str, Any], None, None]:
         "llm": llm,
         "llm_status": llm_status(),
         "advice": advice,
+        "scorecard": scorecard,
+        "chart_overlays": chart_overlays,
         "degraded": any(
             [
                 quote.get("degraded"),

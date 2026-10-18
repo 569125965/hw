@@ -652,17 +652,397 @@ input {
   vertical-align: middle;
 }
 
+/* —— 工作台 / 自选 / 紧凑单页 —— */
+.workspace {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  min-height: 100vh;
+  gap: 0;
+}
+
+.home-workspace .hero-compact {
+  min-height: 100vh;
+  padding: 32px 24px;
+}
+
+.watch-panel {
+  border-right: 1px solid var(--line);
+  background: rgba(7, 19, 24, 0.72);
+  backdrop-filter: blur(8px);
+  padding: 12px 10px 24px;
+  overflow: auto;
+  max-height: 100vh;
+  position: sticky;
+  top: 0;
+}
+
+.watch-head,
+.watch-tools,
+.row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.watch-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.chip {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.chip.active,
+.chip:hover {
+  border-color: var(--amber);
+  color: var(--ink);
+}
+
+.chip span {
+  margin-left: 4px;
+  opacity: 0.7;
+}
+
+.watch-create {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.watch-create input {
+  background: rgba(18, 42, 51, 0.8);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  padding: 6px 8px;
+  border-radius: 4px;
+}
+
+.watch-create button,
+.ghost-btn,
+.text-btn,
+.primary-btn.sm {
+  border: 1px solid rgba(232, 168, 56, 0.45);
+  background: var(--amber-soft);
+  color: var(--amber);
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.ghost-btn.block {
+  width: 100%;
+  margin-bottom: 8px;
+  font-size: 0.8rem;
+}
+
+.text-btn {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+  padding: 2px 4px;
+}
+
+.text-btn.danger {
+  color: #e57373;
+}
+
+.primary-btn.sm {
+  font-size: 0.78rem;
+  padding: 4px 8px;
+}
+
+.primary-btn.sm:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.watch-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.watch-list li {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  gap: 4px;
+  align-items: center;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.watch-list li.active {
+  background: rgba(232, 168, 56, 0.08);
+}
+
+.watch-stock {
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.watch-stock b {
+  display: block;
+  font-size: 0.88rem;
+}
+
+.watch-stock span,
+.watch-list .empty,
+.meta {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.page-compact {
+  padding: 10px 14px 28px;
+  max-width: none;
+}
+
+.topbar.compact {
+  margin-bottom: 8px;
+  gap: 10px;
+}
+
+.quote-bar.compact {
+  padding: 10px 0;
+  margin-bottom: 8px;
+  gap: 12px;
+}
+
+.quote-bar.compact h1 {
+  font-size: 1.35rem;
+  margin: 0;
+}
+
+.metrics.dense {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px 10px;
+  font-size: 0.82rem;
+}
+
+.metrics.dense span {
+  font-size: 0.72rem;
+}
+
+.metrics.dense b {
+  font-size: 0.9rem;
+}
+
+.main-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(260px, 0.9fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.chart-shell-compact {
+  height: 420px;
+}
+
+.panel.compact {
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+
+.panel.compact h2 {
+  font-size: 1rem;
+  margin: 0 0 6px;
+}
+
+.lead.tight {
+  margin: 0 0 6px;
+  font-size: 0.9rem;
+}
+
+.radar-shell {
+  width: 100%;
+  height: 240px;
+}
+
+.score-mini {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 10px;
+}
+
+.score-mini li {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.78rem;
+  color: var(--muted);
+  border-bottom: 1px dashed var(--line);
+  padding: 2px 0;
+}
+
+.score-mini b {
+  color: var(--ink);
+}
+
+.signal-pill {
+  margin-left: auto;
+  border: 1px solid var(--line);
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+}
+
+.signal-pill.buy {
+  border-color: rgba(229, 57, 53, 0.5);
+  color: var(--up);
+}
+
+.signal-pill.sell {
+  border-color: rgba(38, 166, 154, 0.5);
+  color: var(--down);
+}
+
+.signal-legend.dense {
+  margin: 6px 0 10px;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sig.overlay {
+  border: 1px dashed currentColor;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 0.75rem;
+}
+
+.sig.overlay .mark.band {
+  display: inline-block;
+  width: 10px;
+  height: 8px;
+  margin-right: 4px;
+  vertical-align: middle;
+  opacity: 0.85;
+}
+
+.levels.dense {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.action-list.dense li,
+.news-list.dense li {
+  padding: 4px 0;
+  font-size: 0.82rem;
+}
+
+.batch-table-wrap {
+  overflow: auto;
+  max-height: 280px;
+}
+
+.batch-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.batch-table th,
+.batch-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.batch-table tbody tr {
+  cursor: pointer;
+}
+
+.batch-table tbody tr:hover {
+  background: rgba(232, 168, 56, 0.08);
+}
+
+.batch-table .sum {
+  color: var(--muted);
+  max-width: 360px;
+}
+
+.sig-cell {
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.sig-cell.buy {
+  color: var(--up);
+}
+
+.sig-cell.sell {
+  color: var(--down);
+}
+
+.sig-cell.hold {
+  color: var(--amber);
+}
+
+.progress-panel.compact {
+  padding: 16px;
+}
+
+.step-list.dense {
+  gap: 4px;
+}
+
+.step-list.dense .step-preview {
+  font-size: 0.75rem;
+}
+
+@media (max-width: 1100px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .watch-panel {
+    position: relative;
+    max-height: none;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .main-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .metrics.dense {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 800px) {
   .quote-bar {
     grid-template-columns: 1fr;
   }
 
   .metrics,
-  .levels {
+  .levels,
+  .levels.dense {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .chart-shell {
+  .chart-shell,
+  .chart-shell-compact {
     height: 360px;
   }
 

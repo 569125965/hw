@@ -48,12 +48,25 @@ def get_quote(code: str) -> dict[str, Any]:
 
     quote: dict[str, Any] | None = None
     if not settings.demo_mode:
+        # 腾讯字段更全（换手/量比/市值）；东财常 502，作次选
         try:
-            quote = em.get_quote(code)
+            from app.providers import tencent_quote as tq
+
+            quote = tq.get_quote(code)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("em quote failed: %s", exc)
+            logger.warning("tencent quote failed: %s", exc)
+        if quote is None:
             try:
-                quote = _ak_quote(code)
+                quote = em.get_quote(code)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("em quote failed: %s", exc)
+        if quote is None or _quote_metrics_empty(quote):
+            try:
+                enriched = _ak_quote(code)
+                if quote is None:
+                    quote = enriched
+                else:
+                    quote = _merge_quote_metrics(quote, enriched)
             except Exception as exc2:  # noqa: BLE001
                 logger.warning("ak quote failed: %s", exc2)
 
@@ -176,13 +189,42 @@ def _ak_search(q: str) -> list[dict[str, str]]:
     return result
 
 
+def _quote_metrics_empty(q: dict[str, Any]) -> bool:
+    return (
+        float(q.get("turnover_rate") or 0) == 0
+        and float(q.get("volume_ratio") or 0) == 0
+        and float(q.get("total_mv") or 0) == 0
+    )
+
+
+def _merge_quote_metrics(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
+    out = {**base}
+    for k in ("turnover_rate", "volume_ratio", "total_mv", "circ_mv", "pe_ttm", "pb", "amount"):
+        bv = out.get(k)
+        if (bv is None or bv == 0 or bv == 0.0) and extra.get(k):
+            out[k] = extra[k]
+    if out.get("name") in (None, "", out.get("code")) and extra.get("name"):
+        out["name"] = extra["name"]
+    return out
+
+
 def _ak_quote(code: str) -> dict[str, Any]:
-    # 用最近两日 K 线合成快照（spot 接口在部分网络不可用）
-    rows = em.get_kline(code, limit=5)
+    # 优先腾讯；再退回 K 线合成
+    try:
+        from app.providers import tencent_quote as tq
+
+        return tq.get_quote(code)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("tencent in ak_quote failed: %s", exc)
+
+    rows = em.get_kline(code, limit=25)
     if len(rows) < 2:
         raise RuntimeError("insufficient bars for quote")
     last, prev = rows[-1], rows[-2]
     change = last["close"] - prev["close"]
+    vols = [float(r["volume"]) for r in rows[-20:]]
+    avg = sum(vols[:-1]) / max(len(vols) - 1, 1)
+    vr = float(vols[-1] / avg) if avg else 0.0
     return {
         "code": code,
         "name": code,
@@ -198,11 +240,11 @@ def _ak_quote(code: str) -> dict[str, Any]:
         "amount": last["amount"],
         "turnover_rate": 0.0,
         "amplitude": round((last["high"] - last["low"]) / prev["close"] * 100, 2) if prev["close"] else 0.0,
-        "volume_ratio": 0.0,
+        "volume_ratio": round(vr, 2),
         "pe_ttm": 0.0,
         "pb": 0.0,
         "total_mv": 0.0,
         "as_of": last["date"],
-        "degraded": False,
+        "degraded": True,
         "source": "kline_derived",
     }

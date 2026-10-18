@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Query
-from fastapi.responses import StreamingResponse
+from typing import Any
 
+from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+
+from app.services.batch import batch_analyze
 from app.services.capital import analyze_capital
 from app.services.forecast import get_forecast
 from app.services.fundamental import get_fundamental
@@ -14,8 +18,25 @@ from app.services.research import STEPS, build_research, events_to_ndjson
 from app.services.sentiment import get_sentiment
 from app.services.signals import detect_signals
 from app.services.social import get_social
+from app.services import watchlists as wl
 
 router = APIRouter()
+
+
+class GroupCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=40)
+
+
+class GroupRename(BaseModel):
+    name: str = Field(..., min_length=1, max_length=40)
+
+
+class StocksAdd(BaseModel):
+    stocks: list[dict[str, str]] = Field(default_factory=list)
+
+
+class BatchBody(BaseModel):
+    codes: list[str] = Field(default_factory=list)
 
 
 @router.get("/health")
@@ -122,3 +143,56 @@ def stocks_research_stream(code: str) -> StreamingResponse:
             "X-Research-Steps": ",".join(s for s, _ in STEPS),
         },
     )
+
+
+@router.get("/watchlists")
+def watchlists_list() -> dict:
+    return {"groups": wl.list_groups()}
+
+
+@router.post("/watchlists")
+def watchlists_create(body: GroupCreate) -> dict:
+    return wl.create_group(body.name)
+
+
+@router.patch("/watchlists/{group_id}")
+def watchlists_rename(group_id: str, body: GroupRename) -> dict:
+    try:
+        return wl.rename_group(group_id, body.name)
+    except KeyError as exc:
+        raise HTTPException(404, "分组不存在") from exc
+
+
+@router.delete("/watchlists/{group_id}")
+def watchlists_delete(group_id: str) -> dict:
+    try:
+        wl.delete_group(group_id)
+        return {"ok": True}
+    except KeyError as exc:
+        raise HTTPException(404, "分组不存在") from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/watchlists/{group_id}/stocks")
+def watchlists_add_stocks(group_id: str, body: StocksAdd) -> dict:
+    try:
+        return wl.add_stocks(group_id, body.stocks)
+    except KeyError as exc:
+        raise HTTPException(404, "分组不存在") from exc
+
+
+@router.delete("/watchlists/{group_id}/stocks/{code}")
+def watchlists_remove_stock(group_id: str, code: str) -> dict:
+    try:
+        return wl.remove_stock(group_id, code)
+    except KeyError as exc:
+        raise HTTPException(404, "分组不存在") from exc
+
+
+@router.post("/research/batch")
+def research_batch(body: BatchBody) -> dict[str, Any]:
+    codes = body.codes[:30]
+    if not codes:
+        raise HTTPException(400, "请至少选择一只股票")
+    return batch_analyze(codes)

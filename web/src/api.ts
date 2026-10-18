@@ -231,7 +231,55 @@ export type Research = {
   };
   llm_status?: { configured: boolean; hint?: string; model?: string | null };
   advice?: Advice;
+  scorecard?: {
+    dimensions: ScoreDimension[];
+    overall: number;
+    signal: string;
+    signal_icon: string;
+    signal_label: string;
+    action?: string;
+    action_code?: string;
+  };
+  chart_overlays?: {
+    overlays: ChartOverlay[];
+    legend: Array<{ id: string; label: string; color?: string }>;
+  };
   degraded?: boolean;
+};
+
+export type ScoreDimension = { key: string; name: string; score: number };
+
+export type ChartOverlay = {
+  id: string;
+  type: "band" | "line";
+  label: string;
+  y?: number;
+  y0?: number;
+  y1?: number;
+  mid?: number;
+  color?: string;
+  border?: string;
+  style?: string;
+};
+
+export type WatchStock = { code: string; name: string; market: string; added_at?: number };
+export type WatchGroup = { id: string; name: string; stocks: WatchStock[]; created_at?: number };
+
+export type BatchItem = {
+  code: string;
+  name: string;
+  price?: number;
+  change_pct?: number;
+  overall: number;
+  signal: string;
+  signal_icon: string;
+  signal_label: string;
+  action?: string;
+  action_code?: string;
+  urgency?: string;
+  summary: string;
+  capital_label?: string;
+  error?: string;
 };
 
 export type ProgressEvent = {
@@ -309,11 +357,49 @@ export async function streamResearch(
   return research;
 }
 
+async function send<T>(method: string, path: string, body?: unknown, timeoutMs = 60000): Promise<T> {
+  const errors: string[] = [];
+  for (const base of API_FALLBACKS) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    const url = `${base}${path}`;
+    try {
+      const res = await fetch(url, {
+        method,
+        signal: ctrl.signal,
+        headers: body ? { "Content-Type": "application/json" } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      if (!res.ok) {
+        errors.push(`${url} -> HTTP ${res.status}`);
+        continue;
+      }
+      return (await res.json()) as T;
+    } catch (e) {
+      errors.push(`${url} -> ${(e as Error).message}`);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw new Error(`请求失败: ${errors.join(" | ")}`);
+}
+
 export const api = {
   search: (q: string) => get<{ items: StockHit[] }>(`/api/v1/stocks/search?q=${encodeURIComponent(q)}`),
   research: (code: string) => get<Research>(`/api/v1/stocks/${encodeURIComponent(code)}/research`, 90000),
   streamResearch,
   health: () => get<{ status: string }>("/api/v1/health", 8000),
+  watchlists: () => get<{ groups: WatchGroup[] }>("/api/v1/watchlists"),
+  createWatchlist: (name: string) => send<WatchGroup>("POST", "/api/v1/watchlists", { name }),
+  renameWatchlist: (id: string, name: string) =>
+    send<WatchGroup>("PATCH", `/api/v1/watchlists/${id}`, { name }),
+  deleteWatchlist: (id: string) => send<{ ok: boolean }>("DELETE", `/api/v1/watchlists/${id}`),
+  addWatchStocks: (id: string, stocks: WatchStock[]) =>
+    send<WatchGroup>("POST", `/api/v1/watchlists/${id}/stocks`, { stocks }),
+  removeWatchStock: (id: string, code: string) =>
+    send<WatchGroup>("DELETE", `/api/v1/watchlists/${id}/stocks/${code}`),
+  batchResearch: (codes: string[]) =>
+    send<{ items: BatchItem[]; count: number }>("POST", "/api/v1/research/batch", { codes }, 180000),
 };
 
 export function fmtAmount(n: number): string {

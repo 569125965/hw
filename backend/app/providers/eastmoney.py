@@ -69,53 +69,66 @@ def search_stocks(q: str, limit: int = 20) -> list[dict[str, str]]:
 def get_quote(code: str) -> dict[str, Any]:
     code = code.zfill(6)
     fields = "f12,f14,f2,f3,f4,f5,f6,f7,f8,f9,f10,f15,f16,f17,f18,f20,f21,f23"
-    url = (
-        "https://push2delay.eastmoney.com/api/qt/ulist.np/get"
-        f"?fltt=2&invt=2&secids={secid(code)}&fields={fields}"
-    )
-    with _client() as c:
-        r = c.get(url)
-        r.raise_for_status()
-        payload = r.json()
-    diff = (((payload or {}).get("data") or {}).get("diff")) or []
-    if not diff:
-        raise RuntimeError(f"empty quote for {code}")
-    d = diff[0]
-
-    def num(key: str, default: float = 0.0) -> float:
-        v = d.get(key)
-        if v is None or v == "-" or v == "":
-            return default
+    last_err: Exception | None = None
+    for host in (
+        "https://push2.eastmoney.com",
+        "https://push2delay.eastmoney.com",
+    ):
+        url = (
+            f"{host}/api/qt/ulist.np/get"
+            f"?fltt=2&invt=2&secids={secid(code)}&fields={fields}"
+        )
         try:
-            return float(v)
-        except Exception:
-            return default
+            with _client() as c:
+                r = c.get(url)
+                r.raise_for_status()
+                payload = r.json()
+            diff = (((payload or {}).get("data") or {}).get("diff")) or []
+            if not diff:
+                raise RuntimeError(f"empty quote for {code}")
+            d = diff[0]
 
-    price = num("f2")
-    pre = num("f18")
-    return {
-        "code": code,
-        "name": str(d.get("f14") or code).replace(" ", "").replace("\u3000", ""),
-        "market": market_of(code),
-        "price": price,
-        "open": num("f17"),
-        "high": num("f15"),
-        "low": num("f16"),
-        "pre_close": pre,
-        "change": round(num("f4"), 2),
-        "change_pct": round(num("f3"), 2),
-        "volume": int(num("f5")),
-        "amount": num("f6"),
-        "turnover_rate": round(num("f8"), 2),
-        "amplitude": round(num("f7"), 2),
-        "volume_ratio": round(num("f10"), 2),
-        "pe_ttm": round(num("f9"), 2),
-        "pb": round(num("f23"), 2),
-        "total_mv": num("f20"),
-        "as_of": date.today().isoformat(),
-        "degraded": False,
-        "source": "eastmoney",
-    }
+            def num(key: str, default: float = 0.0) -> float:
+                v = d.get(key)
+                if v is None or v == "-" or v == "":
+                    return default
+                try:
+                    return float(v)
+                except Exception:
+                    return default
+
+            price = num("f2")
+            pre = num("f18")
+            return {
+                "code": code,
+                "name": str(d.get("f14") or code).replace(" ", "").replace("\u3000", ""),
+                "market": market_of(code),
+                "price": price,
+                "open": num("f17"),
+                "high": num("f15"),
+                "low": num("f16"),
+                "pre_close": pre,
+                "change": round(num("f4"), 2),
+                "change_pct": round(num("f3"), 2),
+                "volume": int(num("f5")),
+                "amount": num("f6"),
+                "turnover_rate": round(num("f8"), 2),
+                "amplitude": round(num("f7"), 2),
+                "volume_ratio": round(num("f10"), 2),
+                "pe_ttm": round(num("f9"), 2),
+                "pb": round(num("f23"), 2),
+                "total_mv": num("f20"),
+                "circ_mv": num("f21"),
+                "as_of": date.today().isoformat(),
+                "degraded": False,
+                "source": "eastmoney",
+            }
+        except Exception as exc:  # noqa: BLE001
+            last_err = exc
+            logger.warning("eastmoney quote %s failed: %s", host, exc)
+    if last_err:
+        raise last_err
+    raise RuntimeError(f"empty quote for {code}")
 
 
 def get_kline(code: str, limit: int = 180) -> list[dict[str, Any]]:
