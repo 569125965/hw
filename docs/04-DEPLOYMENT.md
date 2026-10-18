@@ -89,6 +89,11 @@ scripts\stop.cmd
 | `ASHARE_DEMO_MODE` | `0` | `1` 强制演示数据 |
 | `ASHARE_CACHE_TTL` | `300` | 秒 |
 | `ASHARE_CORS_ORIGINS` | `*` | 生产改为具体域名 |
+| `LLM_API_KEY` | （空） | 本地 `.env`，勿入库；启用 AI 深度研判 |
+| `LLM_BASE_URL` | `https://api.openai.com/v1` | OpenAI 兼容地址 |
+| `LLM_MODEL` | （空） | 如 `deepseek-chat` |
+
+LLM 配置见 `.env.example` 与 `docs/10-CAPITAL-LLM-MACRO.md`。
 
 ## 8. 备份与升级
 

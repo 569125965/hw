@@ -110,6 +110,7 @@ export type Advice = {
   horizon: string;
   reasons: string[];
   checklist: string[];
+  capital_label?: string;
   disclaimer: string;
 };
 
@@ -174,6 +175,61 @@ export type Research = {
     confidence: number;
     disclaimer: string;
   };
+  capital?: {
+    summary: string;
+    chips?: {
+      pit_low?: number | null;
+      cost_zone?: { low: number; mid: number; high: number } | null;
+      profit_ratio_vs_cost?: number | null;
+      note?: string;
+      placement_hint?: { note: string; ref_high?: number } | null;
+    };
+    volume_phase?: { label: string; up_volume_days?: number; vol_ratio_5_20?: number };
+    money_flow?: { note?: string; available?: boolean; main_net_5d?: number };
+    events?: Array<{
+      type: string;
+      label: string;
+      title: string;
+      published_at?: string;
+      source?: string;
+      bearish?: boolean;
+    }>;
+    thesis?: {
+      code: string;
+      label: string;
+      direction: string;
+      confidence: number;
+      exit_score: number;
+      rally_score: number;
+      signals: string[];
+      scenarios: Array<{ name: string; probability: number; desc: string }>;
+      summary: string;
+    };
+  };
+  macro?: {
+    risk_score: number;
+    regime: string;
+    summary: string;
+    bucket_counts?: Record<string, number>;
+    items?: Array<{
+      id: string;
+      title: string;
+      source: string;
+      published_at?: string;
+      buckets?: string[];
+    }>;
+  };
+  llm?: {
+    enabled: boolean;
+    configured?: boolean;
+    model?: string | null;
+    provider?: string;
+    hint?: string;
+    summary?: string;
+    degraded?: boolean;
+    capital_view?: Record<string, unknown> | null;
+  };
+  llm_status?: { configured: boolean; hint?: string; model?: string | null };
   advice?: Advice;
   degraded?: boolean;
 };
@@ -194,8 +250,11 @@ export const RESEARCH_STEPS: { id: string; label: string }[] = [
   { id: "fundamental", label: "分析产品与行业" },
   { id: "news", label: "聚合官方消息" },
   { id: "social", label: "抓取股吧/新闻舆情与关联" },
+  { id: "macro", label: "采集美联储/地缘等宏观驱动" },
+  { id: "capital", label: "估算筹码与资金行为" },
   { id: "sentiment", label: "评估市场情绪" },
   { id: "forecast", label: "生成走势研判" },
+  { id: "llm", label: "AI深度研判（可选）" },
   { id: "advice", label: "给出买卖操作建议" },
   { id: "done", label: "研究完成" },
 ];

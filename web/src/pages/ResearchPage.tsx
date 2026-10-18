@@ -9,7 +9,7 @@ import {
 } from "../api";
 import KlineChart from "../components/KlineChart";
 
-const TABS = ["建议", "盘面", "基本面", "行业", "消息", "舆情", "情绪", "结论"] as const;
+const TABS = ["建议", "盘面", "筹码", "宏观", "基本面", "行业", "消息", "舆情", "情绪", "AI", "结论"] as const;
 
 type StepState = {
   id: string;
@@ -227,7 +227,9 @@ export default function ResearchPage() {
             </div>
           </div>
           <p className="lead">
-            技术 {data.advice.tech_score} · 舆情 {data.advice.social_score} · 现价 {data.advice.price}
+            技术 {data.advice.tech_score} · 舆情 {data.advice.social_score}
+            {data.advice.capital_label ? ` · 资金「${data.advice.capital_label}」` : ""} · 现价{" "}
+            {data.advice.price}
           </p>
           <h3>依据</h3>
           <ul className="action-list">
@@ -267,6 +269,156 @@ export default function ResearchPage() {
               <b>{data.forecast.levels.resistance?.toFixed(2)}</b>
             </div>
           </div>
+        </section>
+      )}
+
+      {tab === "筹码" && data.capital && (
+        <section className="panel">
+          <h2>筹码与资金行为</h2>
+          <div className={`advice-banner ${data.capital.thesis?.direction === "bullish" ? "bullish" : data.capital.thesis?.direction === "bearish_distribution" || data.capital.thesis?.direction === "cautious" ? "bearish" : "neutral"}`}>
+            <strong>{data.capital.thesis?.label || "—"}</strong>
+            <span>置信 {Math.round((data.capital.thesis?.confidence || 0) * 100)}%</span>
+            <span>出逃分 {data.capital.thesis?.exit_score}</span>
+            <span>拉升分 {data.capital.thesis?.rally_score}</span>
+          </div>
+          <p className="lead">{data.capital.summary}</p>
+          <div className="levels">
+            <div>
+              <span>活动成本</span>
+              <b>{data.capital.chips?.cost_zone?.mid ?? "—"}</b>
+            </div>
+            <div>
+              <span>成本带</span>
+              <b>
+                {data.capital.chips?.cost_zone
+                  ? `${data.capital.chips.cost_zone.low}-${data.capital.chips.cost_zone.high}`
+                  : "—"}
+              </b>
+            </div>
+            <div>
+              <span>坑后低点</span>
+              <b>{data.capital.chips?.pit_low ?? "—"}</b>
+            </div>
+            <div>
+              <span>相对成本</span>
+              <b>
+                {data.capital.chips?.profit_ratio_vs_cost != null
+                  ? `${data.capital.chips.profit_ratio_vs_cost}%`
+                  : "—"}
+              </b>
+            </div>
+          </div>
+          <p className="meta">{data.capital.chips?.note}</p>
+          <h3>量价 · 资金</h3>
+          <p className="lead">
+            {data.capital.volume_phase?.label}
+            {data.capital.money_flow?.note ? ` · ${data.capital.money_flow.note}` : ""}
+          </p>
+          <h3>关键事件</h3>
+          <ul className="news-list">
+            {(data.capital.events || []).map((e) => (
+              <li key={`${e.type}-${e.title}`}>
+                <b className={e.severity ? "down" : ""}>
+                  [{e.label}] {e.title}
+                </b>
+                <div className="src">
+                  {e.source}
+                  {e.published_at ? ` · ${e.published_at}` : ""}
+                </div>
+              </li>
+            ))}
+          </ul>
+          <h3>研判信号</h3>
+          <ul className="action-list">
+            {(data.capital.thesis?.signals || []).map((s) => (
+              <li key={s}>• {s}</li>
+            ))}
+          </ul>
+          <h3>情景</h3>
+          <ul className="product-list">
+            {(data.capital.thesis?.scenarios || []).map((s) => (
+              <li key={s.name}>
+                <b>
+                  {s.name} · {(s.probability * 100).toFixed(0)}%
+                </b>
+                <div>{s.desc}</div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {tab === "宏观" && data.macro && (
+        <section className="panel">
+          <h2>宏观与地缘驱动</h2>
+          <div className="sentiment-score">
+            <div className="score-ring">{data.macro.risk_score}</div>
+            <div>
+              <strong>{data.macro.regime}</strong>
+              <p className="lead">{data.macro.summary}</p>
+              <div className="meta">
+                美联储 {data.macro.bucket_counts?.fed ?? 0} · 地缘{" "}
+                {data.macro.bucket_counts?.geopolitics ?? 0} · 国内政策{" "}
+                {data.macro.bucket_counts?.china_policy ?? 0}
+              </div>
+            </div>
+          </div>
+          <ul className="news-list">
+            {(data.macro.items || []).slice(0, 20).map((n) => (
+              <li key={n.id}>
+                <b>{n.title}</b>
+                <div className="src">
+                  {n.source}
+                  {n.published_at ? ` · ${n.published_at}` : ""}
+                  {(n.buckets || []).length ? ` · ${(n.buckets || []).join("/")}` : ""}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {tab === "AI" && (
+        <section className="panel">
+          <h2>AI 深度研判</h2>
+          {!data.llm?.enabled ? (
+            <>
+              <p className="lead">
+                {data.llm?.hint ||
+                  data.llm_status?.hint ||
+                  "未配置 LLM。在项目根复制 .env.example 为 .env，填写 LLM_API_KEY / LLM_BASE_URL / LLM_MODEL 后重启。"}
+              </p>
+              <p className="meta">密钥仅存本地 .env，不会进入代码仓库。</p>
+            </>
+          ) : (
+            <>
+              <div className="meta">
+                模型 {data.llm.model} · {data.llm.provider}
+                {data.llm.degraded ? " · 调用异常" : ""}
+              </div>
+              <p className="lead">{data.llm.summary}</p>
+              {data.llm.capital_view && (
+                <ul className="product-list">
+                  <li>
+                    <b>资金行为 · {String(data.llm.capital_view.capital_behavior || "—")}</b>
+                    <div>操作倾向：{String(data.llm.capital_view.action_bias || "—")}</div>
+                  </li>
+                  <li>
+                    <b>筹码解读</b>
+                    <div>{String(data.llm.capital_view.chip_read || "—")}</div>
+                  </li>
+                  <li>
+                    <b>事件影响</b>
+                    <div>{String(data.llm.capital_view.event_impact || "—")}</div>
+                  </li>
+                  <li>
+                    <b>宏观叠加</b>
+                    <div>{String(data.llm.capital_view.macro_overlay || "—")}</div>
+                  </li>
+                </ul>
+              )}
+            </>
+          )}
         </section>
       )}
 

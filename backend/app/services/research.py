@@ -6,8 +6,11 @@ from typing import Any, Generator
 
 from app.core.cache import cache
 from app.services.advice import build_advice
+from app.services.capital import analyze_capital
 from app.services.forecast import get_forecast
 from app.services.fundamental import get_fundamental
+from app.services.llm import deep_analyze, llm_status
+from app.services.macro import get_macro
 from app.services.market import get_kline, get_quote
 from app.services.news import get_news
 from app.services.sentiment import get_sentiment
@@ -20,8 +23,11 @@ STEPS = [
     ("fundamental", "分析产品与行业"),
     ("news", "聚合官方消息"),
     ("social", "抓取股吧/新闻舆情与关联"),
+    ("macro", "采集美联储/地缘等宏观驱动"),
+    ("capital", "估算筹码与资金行为"),
     ("sentiment", "评估市场情绪"),
     ("forecast", "生成走势研判"),
+    ("llm", "AI深度研判（可选）"),
     ("advice", "给出买卖操作建议"),
     ("done", "研究完成"),
 ]
@@ -46,23 +52,27 @@ def build_research(code: str) -> dict[str, Any]:
 def iter_research_events(code: str) -> Generator[dict[str, Any], None, None]:
     yield {"step": "resolve", "status": "running", "label": "识别股票"}
 
-    for step in ("quote", "kline", "fundamental", "news", "social"):
+    for step in ("quote", "kline", "fundamental", "news", "social", "macro"):
         yield {"step": step, "status": "running", "label": dict(STEPS)[step]}
 
     quote: dict[str, Any] = {}
     kline: dict[str, Any] = {}
+    kline_long: dict[str, Any] = {}
     fundamental: dict[str, Any] = {}
     news: dict[str, Any] = {}
     social: dict[str, Any] = {}
+    macro: dict[str, Any] = {}
     errors: dict[str, str] = {}
 
-    with ThreadPoolExecutor(max_workers=5) as pool:
+    with ThreadPoolExecutor(max_workers=6) as pool:
         futs = {
             pool.submit(get_quote, code): "quote",
             pool.submit(get_kline, code, "day", 180): "kline",
+            pool.submit(get_kline, code, "day", 360): "kline_long",
             pool.submit(get_fundamental, code): "fundamental",
             pool.submit(get_news, code): "news",
             pool.submit(get_social, code): "social",
+            pool.submit(get_macro): "macro",
         }
         for fut in as_completed(futs):
             name = futs[fut]
@@ -72,26 +82,39 @@ def iter_research_events(code: str) -> Generator[dict[str, Any], None, None]:
                     quote = data
                 elif name == "kline":
                     kline = data
+                elif name == "kline_long":
+                    kline_long = data
                 elif name == "fundamental":
                     fundamental = data
                 elif name == "news":
                     news = data
-                else:
+                elif name == "social":
                     social = data
-                yield {
-                    "step": name,
-                    "status": "done",
-                    "label": dict(STEPS)[name],
-                    "preview": _preview(name, data),
-                }
+                elif name == "macro":
+                    macro = data
+                    yield {
+                        "step": "macro",
+                        "status": "done",
+                        "label": dict(STEPS)["macro"],
+                        "preview": _preview("macro", data),
+                    }
+                if name in ("quote", "kline", "fundamental", "news", "social"):
+                    yield {
+                        "step": name,
+                        "status": "done",
+                        "label": dict(STEPS)[name],
+                        "preview": _preview(name, data),
+                    }
             except Exception as exc:  # noqa: BLE001
                 errors[name] = str(exc)
-                yield {
-                    "step": name,
-                    "status": "error",
-                    "label": dict(STEPS)[name],
-                    "error": str(exc),
-                }
+                step_name = "kline" if name == "kline_long" else name
+                if name != "kline_long":
+                    yield {
+                        "step": step_name,
+                        "status": "error",
+                        "label": dict(STEPS).get(step_name, step_name),
+                        "error": str(exc),
+                    }
 
     if not quote or not kline:
         yield {
@@ -101,6 +124,18 @@ def iter_research_events(code: str) -> Generator[dict[str, Any], None, None]:
             "error": "盘面或K线拉取失败：" + "; ".join(f"{k}={v}" for k, v in errors.items()),
         }
         return
+
+    if not kline_long:
+        kline_long = kline
+    if not macro:
+        macro = {
+            "items": [],
+            "risk_score": 50,
+            "regime": "未知",
+            "summary": "宏观暂不可用",
+            "degraded": True,
+            "bucket_counts": {},
+        }
 
     resolved = quote.get("code", code)
     yield {
@@ -122,8 +157,22 @@ def iter_research_events(code: str) -> Generator[dict[str, Any], None, None]:
             "degraded": True,
         }
 
+    yield {"step": "capital", "status": "running", "label": "估算筹码与资金行为"}
+    capital = analyze_capital(
+        resolved,
+        quote=quote,
+        kline=kline_long,
+        news=news or {"items": []},
+        social=social,
+    )
+    yield {
+        "step": "capital",
+        "status": "done",
+        "label": "估算筹码与资金行为",
+        "preview": f"{capital.get('thesis', {}).get('label')} · {capital.get('volume_phase', {}).get('label')}",
+    }
+
     yield {"step": "sentiment", "status": "running", "label": "评估市场情绪"}
-    # 情绪计算已纳入人气热度 / 股吧极性；再与舆情综合分轻度对齐
     sentiment = get_sentiment(
         resolved,
         quote=quote,
@@ -173,8 +222,37 @@ def iter_research_events(code: str) -> Generator[dict[str, Any], None, None]:
         "preview": forecast.get("stance"),
     }
 
+    yield {"step": "llm", "status": "running", "label": "AI深度研判（可选）"}
+    llm = deep_analyze(
+        quote=quote,
+        capital=capital,
+        social=social,
+        sentiment=sentiment,
+        macro=macro,
+        news=news or {"items": []},
+        forecast=forecast,
+    )
+    yield {
+        "step": "llm",
+        "status": "done",
+        "label": "AI深度研判（可选）",
+        "preview": (
+            f"{llm.get('model') or '未配置'}"
+            if llm.get("enabled")
+            else "未配置LLM"
+        ),
+    }
+
     yield {"step": "advice", "status": "running", "label": "给出买卖操作建议"}
-    advice = build_advice(quote=quote, forecast=forecast, sentiment=sentiment, social=social)
+    advice = build_advice(
+        quote=quote,
+        forecast=forecast,
+        sentiment=sentiment,
+        social=social,
+        capital=capital,
+        macro=macro,
+        llm=llm,
+    )
     yield {
         "step": "advice",
         "status": "done",
@@ -196,7 +274,6 @@ def iter_research_events(code: str) -> Generator[dict[str, Any], None, None]:
     if not news:
         news = {"code": resolved, "name": quote.get("name", resolved), "items": [], "degraded": True}
 
-    # enrich peers with social related
     peers = list(fundamental.get("peers") or [])
     seen = {p.get("code") for p in peers}
     for r in social.get("related") or []:
@@ -221,8 +298,12 @@ def iter_research_events(code: str) -> Generator[dict[str, Any], None, None]:
         "fundamental": fundamental,
         "news": news,
         "social": social,
+        "macro": macro,
+        "capital": capital,
         "sentiment": sentiment,
         "forecast": forecast,
+        "llm": llm,
+        "llm_status": llm_status(),
         "advice": advice,
         "degraded": any(
             [
@@ -233,6 +314,9 @@ def iter_research_events(code: str) -> Generator[dict[str, Any], None, None]:
                 social.get("degraded"),
                 sentiment.get("degraded"),
                 forecast.get("degraded"),
+                capital.get("degraded"),
+                macro.get("degraded"),
+                llm.get("degraded"),
             ]
         ),
         "errors": errors or None,
@@ -260,6 +344,8 @@ def _preview(name: str, data: dict[str, Any]) -> str:
             f"舆情 {data.get('mood_score')}（{data.get('mood_label')}）· "
             f"股吧 {data.get('guba_count', 0)} · 关联 {len(data.get('related') or [])}"
         )
+    if name == "macro":
+        return f"{data.get('regime')} · 风险分 {data.get('risk_score')} · {len(data.get('items') or [])} 条"
     return "ok"
 
 

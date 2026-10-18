@@ -3,8 +3,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
 
+from app.services.capital import analyze_capital
 from app.services.forecast import get_forecast
 from app.services.fundamental import get_fundamental
+from app.services.llm import llm_status
+from app.services.macro import get_macro
 from app.services.market import get_kline, get_quote, search_stocks
 from app.services.news import get_news
 from app.services.research import STEPS, build_research, events_to_ndjson
@@ -17,7 +20,7 @@ router = APIRouter()
 
 @router.get("/health")
 def health() -> dict:
-    return {"status": "ok", "service": "ashare-lab"}
+    return {"status": "ok", "service": "ashare-lab", "llm": llm_status()}
 
 
 @router.get("/stocks/search")
@@ -81,6 +84,25 @@ def stocks_sentiment(code: str) -> dict:
 @router.get("/stocks/{code}/forecast")
 def stocks_forecast(code: str) -> dict:
     return get_forecast(code)
+
+
+@router.get("/macro/drivers")
+def macro_drivers() -> dict:
+    return get_macro()
+
+
+@router.get("/llm/status")
+def llm_config_status() -> dict:
+    return llm_status()
+
+
+@router.get("/stocks/{code}/capital")
+def stocks_capital(code: str) -> dict:
+    quote = get_quote(code)
+    kline = get_kline(code, period="day", limit=360)
+    news = get_news(code)
+    social = get_social(code)
+    return analyze_capital(code, quote=quote, kline=kline, news=news, social=social)
 
 
 @router.get("/stocks/{code}/research")
